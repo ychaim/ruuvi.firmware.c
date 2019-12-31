@@ -1,0 +1,110 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_button.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup button_tasks</a>
+<a name="ln3"> */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_button.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @date 2019-12-26</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln10"> *</a>
+<a name="ln11"> *</a>
+<a name="ln12"> */</a>
+<a name="ln13"> </a>
+<a name="ln14">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln15">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln16">#include &quot;application_config.h&quot;</a>
+<a name="ln17">#include &quot;ruuvi_interface_gpio.h&quot;</a>
+<a name="ln18">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln19">#include &quot;task_button.h&quot;</a>
+<a name="ln20"> </a>
+<a name="ln21">#include &lt;stddef.h&gt;</a>
+<a name="ln22"> </a>
+<a name="ln23">#if APPLICATION_BUTTON_ENABLED</a>
+<a name="ln24">static task_button_fp_t button_callback = NULL;</a>
+<a name="ln25"> </a>
+<a name="ln26">// Wrapper to gpio interrupt function</a>
+<a name="ln27">#ifndef CEEDLING</a>
+<a name="ln28">static</a>
+<a name="ln29">#endif</a>
+<a name="ln30">void on_button_isr (ruuvi_interface_gpio_evt_t event)</a>
+<a name="ln31">{</a>
+<a name="ln32">    if (NULL != button_callback)</a>
+<a name="ln33">    {</a>
+<a name="ln34">        button_callback (event);</a>
+<a name="ln35">    }</a>
+<a name="ln36"> </a>
+<a name="ln37">    ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, &quot;Button\r\n&quot;);</a>
+<a name="ln38">}</a>
+<a name="ln39"> </a>
+<a name="ln40">ruuvi_driver_status_t task_button_init (task_button_fp_t action)</a>
+<a name="ln41">{</a>
+<a name="ln42">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln43">    button_callback = action;</a>
+<a name="ln44">    ruuvi_interface_gpio_id_t pin = {.pin = RUUVI_BOARD_BUTTON_1};</a>
+<a name="ln45">    ruuvi_interface_gpio_slope_t slope = RUUVI_INTERFACE_GPIO_SLOPE_TOGGLE;</a>
+<a name="ln46">    ruuvi_interface_gpio_mode_t  mode  = RUUVI_INTERFACE_GPIO_MODE_INPUT_PULLDOWN;</a>
+<a name="ln47"> </a>
+<a name="ln48">    if (RUUVI_INTERFACE_GPIO_LOW == RUUVI_BOARD_BUTTONS_ACTIVE_STATE)</a>
+<a name="ln49">    {</a>
+<a name="ln50">        mode  = RUUVI_INTERFACE_GPIO_MODE_INPUT_PULLUP;</a>
+<a name="ln51">    }</a>
+<a name="ln52"> </a>
+<a name="ln53">    err_code |= ruuvi_interface_gpio_interrupt_enable (pin, slope,</a>
+<a name="ln54">                mode, &amp;on_button_isr);</a>
+<a name="ln55">    return err_code;</a>
+<a name="ln56">}</a>
+<a name="ln57"> </a>
+<a name="ln58">#else // APPLICATION_BUTTON_ENABLED</a>
+<a name="ln59">ruuvi_driver_status_t task_button_init (task_button_fp_t action)</a>
+<a name="ln60">{</a>
+<a name="ln61">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln62">}</a>
+<a name="ln63">#endif</a>
+<a name="ln64">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="44"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

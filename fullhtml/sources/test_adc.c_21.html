@@ -1,0 +1,85 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>test_adc.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;application_config.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln5">#include &quot;ruuvi_interface_adc.h&quot;</a>
+<a name="ln6">#include &quot;ruuvi_interface_adc_mcu.h&quot;</a>
+<a name="ln7">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln8">#include &quot;test_sensor.h&quot;</a>
+<a name="ln9"> </a>
+<a name="ln10">#include &lt;stddef.h&gt;</a>
+<a name="ln11">#include &lt;stdio.h&gt;</a>
+<a name="ln12">#include &lt;inttypes.h&gt;</a>
+<a name="ln13"> </a>
+<a name="ln14">// Use own file for each test run to track the source of any errors.</a>
+<a name="ln15">static ruuvi_driver_status_t test_run (const ruuvi_driver_sensor_init_fp init,</a>
+<a name="ln16">                                       const ruuvi_driver_bus_t bus, uint8_t const handle)</a>
+<a name="ln17">{</a>
+<a name="ln18">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln19">#ifdef RUUVI_RUN_TESTS</a>
+<a name="ln20">    err_code = test_sensor_init (init, bus, handle);</a>
+<a name="ln21">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_SELFTEST);</a>
+<a name="ln22">    err_code = test_sensor_setup (init, bus, handle);</a>
+<a name="ln23">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_SELFTEST);</a>
+<a name="ln24">    err_code = test_sensor_modes (init, bus, handle);</a>
+<a name="ln25">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_SELFTEST);</a>
+<a name="ln26">#endif</a>
+<a name="ln27">    return err_code;</a>
+<a name="ln28">}</a>
+<a name="ln29"> </a>
+<a name="ln30"> </a>
+<a name="ln31">ruuvi_driver_status_t test_adc_run (void)</a>
+<a name="ln32">{</a>
+<a name="ln33">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_NONE;</a>
+<a name="ln34">    uint8_t handle = RUUVI_INTERFACE_ADC_AINVDD;</a>
+<a name="ln35">    // Test gets run only if RUUVI_RUN_TEST has been defined</a>
+<a name="ln36">    return test_run (ruuvi_interface_adc_mcu_init, bus, handle);</a>
+<a name="ln37">}</a>
+
+</code></pre>
+<div class="balloon" rel="15"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'bus'.</p></div>
+<div class="balloon" rel="15"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'handle'.</p></div>
+<div class="balloon" rel="15"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'init'.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

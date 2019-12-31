@@ -1,0 +1,181 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_acceleration.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_interface_acceleration.h&quot;</a>
+<a name="ln5">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln6">#include &quot;ruuvi_interface_gpio_interrupt.h&quot;</a>
+<a name="ln7">#include &quot;ruuvi_interface_lis2dh12.h&quot;</a>
+<a name="ln8">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln9">#include &quot;ruuvi_interface_rtc.h&quot;</a>
+<a name="ln10">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln11">#include &quot;ruuvi_interface_timer.h&quot;</a>
+<a name="ln12">#include &quot;ruuvi_interface_yield.h&quot;</a>
+<a name="ln13"> </a>
+<a name="ln14">#include &quot;task_acceleration.h&quot;</a>
+<a name="ln15">#include &quot;task_gpio.h&quot;</a>
+<a name="ln16">#include &quot;task_communication.h&quot;</a>
+<a name="ln17">#include &quot;task_sensor.h&quot;</a>
+<a name="ln18"> </a>
+<a name="ln19">#include &lt;math.h&gt;</a>
+<a name="ln20">#include &lt;stddef.h&gt;</a>
+<a name="ln21">#include &lt;stdio.h&gt;</a>
+<a name="ln22">#include &lt;string.h&gt;</a>
+<a name="ln23">#include &lt;inttypes.h&gt;</a>
+<a name="ln24"> </a>
+<a name="ln25">#define TASK_ACCELERATION_LOG_LEVEL RUUVI_INTERFACE_LOG_INFO</a>
+<a name="ln26">#define LOG(x) ruuvi_interface_log(TASK_ACCELERATION_LOG_LEVEL, x);</a>
+<a name="ln27">#define LOGD(x) ruuvi_interface_log(RUUVI_INTERFACE_LOG_DEBUG, x);</a>
+<a name="ln28"> </a>
+<a name="ln29">static ruuvi_driver_sensor_t acceleration_sensor = {0};</a>
+<a name="ln30">static uint8_t m_nbr_movements;</a>
+<a name="ln31"> </a>
+<a name="ln32">static void task_acceleration_on_activity (ruuvi_interface_gpio_evt_t event)</a>
+<a name="ln33">{</a>
+<a name="ln34">    m_nbr_movements++;</a>
+<a name="ln35">}</a>
+<a name="ln36"> </a>
+<a name="ln37">ruuvi_driver_status_t task_acceleration_init (void)</a>
+<a name="ln38">{</a>
+<a name="ln39">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln40">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_NONE;</a>
+<a name="ln41">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln42">    config.samplerate    = APPLICATION_ACCELEROMETER_SAMPLERATE;</a>
+<a name="ln43">    config.resolution    = APPLICATION_ACCELEROMETER_RESOLUTION;</a>
+<a name="ln44">    config.scale         = APPLICATION_ACCELEROMETER_SCALE;</a>
+<a name="ln45">    config.dsp_function  = APPLICATION_ACCELEROMETER_DSPFUNC;</a>
+<a name="ln46">    config.dsp_parameter = APPLICATION_ACCELEROMETER_DSPPARAM;</a>
+<a name="ln47">    config.mode          = APPLICATION_ACCELEROMETER_MODE;</a>
+<a name="ln48">    uint8_t handle = 0;</a>
+<a name="ln49">    m_nbr_movements = 0;</a>
+<a name="ln50"> </a>
+<a name="ln51">    if (!task_gpio_is_init())</a>
+<a name="ln52">    {</a>
+<a name="ln53">        task_gpio_init();</a>
+<a name="ln54">    }</a>
+<a name="ln55"> </a>
+<a name="ln56">#if RUUVI_BOARD_ACCELEROMETER_LIS2DH12_PRESENT</a>
+<a name="ln57">    err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln58">    // Only SPI supported for now</a>
+<a name="ln59">    bus = RUUVI_DRIVER_BUS_SPI;</a>
+<a name="ln60">    handle = RUUVI_BOARD_SPI_SS_ACCELEROMETER_PIN;</a>
+<a name="ln61">    err_code |= ruuvi_interface_lis2dh12_init (&amp;acceleration_sensor, bus, handle);</a>
+<a name="ln62">    RUUVI_DRIVER_ERROR_CHECK (err_code, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln63"> </a>
+<a name="ln64">    if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln65">    {</a>
+<a name="ln66">        ruuvi_interface_gpio_id_t pin = {.pin = RUUVI_BOARD_INT_ACC2_PIN};</a>
+<a name="ln67">        err_code |= task_sensor_configure (&amp;acceleration_sensor, &amp;config, &quot;g&quot;);</a>
+<a name="ln68">        float ths = APPLICATION_ACCELEROMETER_ACTIVITY_THRESHOLD;</a>
+<a name="ln69">        err_code |= ruuvi_interface_lis2dh12_activity_interrupt_use (true, &amp;ths);</a>
+<a name="ln70">        err_code |= ruuvi_interface_gpio_interrupt_enable (pin, RUUVI_INTERFACE_GPIO_SLOPE_LOTOHI,</a>
+<a name="ln71">                    RUUVI_INTERFACE_GPIO_MODE_INPUT_NOPULL, task_acceleration_on_activity);</a>
+<a name="ln72">        return err_code;</a>
+<a name="ln73">    }</a>
+<a name="ln74"> </a>
+<a name="ln75">#endif</a>
+<a name="ln76">    // Return error if usable acceleration sensor was not found.</a>
+<a name="ln77">    return RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln78">}</a>
+<a name="ln79"> </a>
+<a name="ln80"> </a>
+<a name="ln81">ruuvi_driver_status_t task_acceleration_data_get (ruuvi_driver_sensor_data_t *</a>
+<a name="ln82">        const data)</a>
+<a name="ln83">{</a>
+<a name="ln84">    if (NULL == data)</a>
+<a name="ln85">    {</a>
+<a name="ln86">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln87">    }</a>
+<a name="ln88"> </a>
+<a name="ln89">    if (NULL == acceleration_sensor.data_get)</a>
+<a name="ln90">    {</a>
+<a name="ln91">        return RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln92">    }</a>
+<a name="ln93"> </a>
+<a name="ln94">    ruuvi_driver_status_t err_code = acceleration_sensor.data_get (data);</a>
+<a name="ln95">    return err_code;</a>
+<a name="ln96">}</a>
+<a name="ln97"> </a>
+<a name="ln98">ruuvi_driver_status_t task_acceleration_on_button (void)</a>
+<a name="ln99">{</a>
+<a name="ln100">    // No implementation needed</a>
+<a name="ln101">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln102">}</a>
+<a name="ln103"> </a>
+<a name="ln104">ruuvi_driver_status_t task_acceleration_movement_count_get (uint8_t * const count)</a>
+<a name="ln105">{</a>
+<a name="ln106">    *count = m_nbr_movements;</a>
+<a name="ln107">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln108">}</a>
+<a name="ln109"> </a>
+<a name="ln110">ruuvi_driver_status_t task_acceleration_fifo_use (const bool enable)</a>
+<a name="ln111">{</a>
+<a name="ln112">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln113"> </a>
+<a name="ln114">    if (true == enable)</a>
+<a name="ln115">    {</a>
+<a name="ln116">        err_code |= ruuvi_interface_lis2dh12_fifo_use (true);</a>
+<a name="ln117">        err_code |= ruuvi_interface_lis2dh12_fifo_interrupt_use (true);</a>
+<a name="ln118">    }</a>
+<a name="ln119"> </a>
+<a name="ln120">    if (false == enable)</a>
+<a name="ln121">    {</a>
+<a name="ln122">        err_code |= ruuvi_interface_lis2dh12_fifo_use (false);</a>
+<a name="ln123">        err_code |= ruuvi_interface_lis2dh12_fifo_interrupt_use (false);</a>
+<a name="ln124">    }</a>
+<a name="ln125"> </a>
+<a name="ln126">    return err_code;</a>
+<a name="ln127">}</a>
+
+</code></pre>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="62"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="62"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="66"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="77"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="37"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="86"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="91"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="81"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_led.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2">  * @addtogroup led_tasks</a>
+<a name="ln3">  */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_led.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @date 2019-11-19</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln10"> */</a>
+<a name="ln11"> </a>
+<a name="ln12">#include &quot;task_led.h&quot;</a>
+<a name="ln13">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln14">#include &quot;ruuvi_interface_gpio.h&quot;</a>
+<a name="ln15">#include &lt;stddef.h&gt;</a>
+<a name="ln16"> </a>
+<a name="ln17">static uint16_t m_activity_led;</a>
+<a name="ln18">static bool     m_initialized;</a>
+<a name="ln19">// TODO @ojousima - refactor the static variable out</a>
+<a name="ln20">static ruuvi_interface_gpio_id_t leds[RUUVI_BOARD_LEDS_NUMBER];</a>
+<a name="ln21"> </a>
+<a name="ln22">#ifndef CEEDLING</a>
+<a name="ln23">static</a>
+<a name="ln24">#endif</a>
+<a name="ln25">bool is_led (const uint16_t led)</a>
+<a name="ln26">{</a>
+<a name="ln27">    bool led_valid = false;</a>
+<a name="ln28"> </a>
+<a name="ln29">    for (size_t ii = 0U; ii &lt; RUUVI_BOARD_LEDS_NUMBER; ii++)</a>
+<a name="ln30">    {</a>
+<a name="ln31">        if (led == leds[ii].pin)</a>
+<a name="ln32">        {</a>
+<a name="ln33">            led_valid = true;</a>
+<a name="ln34">            break;</a>
+<a name="ln35">        }</a>
+<a name="ln36">    }</a>
+<a name="ln37"> </a>
+<a name="ln38">    return led_valid;</a>
+<a name="ln39">}</a>
+<a name="ln40"> </a>
+<a name="ln41">static inline ruuvi_interface_gpio_state_t led_to_pin_state (bool active)</a>
+<a name="ln42">{</a>
+<a name="ln43">    ruuvi_interface_gpio_state_t state;</a>
+<a name="ln44"> </a>
+<a name="ln45">    if (true == RUUVI_BOARD_LEDS_ACTIVE_STATE)</a>
+<a name="ln46">    {</a>
+<a name="ln47">        state = active ? RUUVI_INTERFACE_GPIO_HIGH : RUUVI_INTERFACE_GPIO_LOW;</a>
+<a name="ln48">    }</a>
+<a name="ln49">    else</a>
+<a name="ln50">    {</a>
+<a name="ln51">        state = active ? RUUVI_INTERFACE_GPIO_LOW : RUUVI_INTERFACE_GPIO_HIGH;</a>
+<a name="ln52">    }</a>
+<a name="ln53"> </a>
+<a name="ln54">    return state;</a>
+<a name="ln55">}</a>
+<a name="ln56"> </a>
+<a name="ln57">ruuvi_driver_status_t task_led_init (void)</a>
+<a name="ln58">{</a>
+<a name="ln59">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln60"> </a>
+<a name="ln61">    if (m_initialized)</a>
+<a name="ln62">    {</a>
+<a name="ln63">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln64">    }</a>
+<a name="ln65">    else</a>
+<a name="ln66">    {</a>
+<a name="ln67">        if (!ruuvi_interface_gpio_is_init())</a>
+<a name="ln68">        {</a>
+<a name="ln69">            err_code |= ruuvi_interface_gpio_init();</a>
+<a name="ln70">        }</a>
+<a name="ln71">    }</a>
+<a name="ln72"> </a>
+<a name="ln73">    if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln74">    {</a>
+<a name="ln75">        // TODO @ojousima: refactor this array out.</a>
+<a name="ln76">        uint16_t pins[] = RUUVI_BOARD_LEDS_LIST;</a>
+<a name="ln77"> </a>
+<a name="ln78">        for (size_t ii = 0u; ii &lt; RUUVI_BOARD_LEDS_NUMBER; ii++)</a>
+<a name="ln79">        {</a>
+<a name="ln80">            ruuvi_interface_gpio_id_t led;</a>
+<a name="ln81">            led.pin = pins[ii];</a>
+<a name="ln82">            leds[ii] = led;</a>
+<a name="ln83">            err_code |= ruuvi_interface_gpio_configure (leds[ii],</a>
+<a name="ln84">                        RUUVI_INTERFACE_GPIO_MODE_OUTPUT_HIGHDRIVE);</a>
+<a name="ln85">            err_code |= ruuvi_interface_gpio_write (leds[ii],</a>
+<a name="ln86">                                                    !RUUVI_BOARD_LEDS_ACTIVE_STATE);</a>
+<a name="ln87">        }</a>
+<a name="ln88"> </a>
+<a name="ln89">        m_activity_led = RUUVI_INTERFACE_GPIO_ID_UNUSED;</a>
+<a name="ln90">        m_initialized = true;</a>
+<a name="ln91">    }</a>
+<a name="ln92"> </a>
+<a name="ln93">    return err_code;</a>
+<a name="ln94">}</a>
+<a name="ln95"> </a>
+<a name="ln96">ruuvi_driver_status_t task_led_uninit (void)</a>
+<a name="ln97">{</a>
+<a name="ln98">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln99"> </a>
+<a name="ln100">    for (size_t ii = 0U; ii &lt; RUUVI_BOARD_LEDS_NUMBER; ii++)</a>
+<a name="ln101">    {</a>
+<a name="ln102">        err_code |= ruuvi_interface_gpio_configure (leds[ii], RUUVI_INTERFACE_GPIO_MODE_HIGH_Z);</a>
+<a name="ln103">    }</a>
+<a name="ln104"> </a>
+<a name="ln105">    m_activity_led = RUUVI_INTERFACE_GPIO_ID_UNUSED;</a>
+<a name="ln106">    m_initialized = false;</a>
+<a name="ln107">    return err_code;</a>
+<a name="ln108">}</a>
+<a name="ln109"> </a>
+<a name="ln110">ruuvi_driver_status_t task_led_write (const uint16_t led, const bool active)</a>
+<a name="ln111">{</a>
+<a name="ln112">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln113"> </a>
+<a name="ln114">    if (!is_led (led))</a>
+<a name="ln115">    {</a>
+<a name="ln116">        err_code |= RUUVI_DRIVER_ERROR_INVALID_PARAM;</a>
+<a name="ln117">    }</a>
+<a name="ln118">    else if (!m_initialized)</a>
+<a name="ln119">    {</a>
+<a name="ln120">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln121">    }</a>
+<a name="ln122">    else</a>
+<a name="ln123">    {</a>
+<a name="ln124">        ruuvi_interface_gpio_id_t pin = {.pin = led };</a>
+<a name="ln125">        const ruuvi_interface_gpio_state_t state = led_to_pin_state (active);</a>
+<a name="ln126">        err_code |= ruuvi_interface_gpio_write (pin, state);</a>
+<a name="ln127">    }</a>
+<a name="ln128"> </a>
+<a name="ln129">    return err_code;</a>
+<a name="ln130">}</a>
+<a name="ln131"> </a>
+<a name="ln132">void task_led_activity_indicate (const bool active)</a>
+<a name="ln133">{</a>
+<a name="ln134">    // Error code cannot be returned, ignore</a>
+<a name="ln135">    (void) task_led_write (m_activity_led, active);</a>
+<a name="ln136">}</a>
+<a name="ln137"> </a>
+<a name="ln138">ruuvi_driver_status_t task_led_activity_led_set (uint16_t led)</a>
+<a name="ln139">{</a>
+<a name="ln140">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln141"> </a>
+<a name="ln142">    if (RUUVI_INTERFACE_GPIO_ID_UNUSED == led)</a>
+<a name="ln143">    {</a>
+<a name="ln144">        m_activity_led = RUUVI_INTERFACE_GPIO_ID_UNUSED;</a>
+<a name="ln145">    }</a>
+<a name="ln146">    else if (!is_led (led))</a>
+<a name="ln147">    {</a>
+<a name="ln148">        err_code |= RUUVI_DRIVER_ERROR_INVALID_PARAM;</a>
+<a name="ln149">    }</a>
+<a name="ln150">    else</a>
+<a name="ln151">    {</a>
+<a name="ln152">        m_activity_led = led;</a>
+<a name="ln153">    }</a>
+<a name="ln154"> </a>
+<a name="ln155">    return err_code;</a>
+<a name="ln156">}</a>
+<a name="ln157"> </a>
+<a name="ln158">uint16_t task_led_activity_led_get (void)</a>
+<a name="ln159">{</a>
+<a name="ln160">    return m_activity_led;</a>
+<a name="ln161">}</a>
+<a name="ln162">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="63"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="63"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="76"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="86"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '0' operand of the '!' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 4)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="120"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="120"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 4)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

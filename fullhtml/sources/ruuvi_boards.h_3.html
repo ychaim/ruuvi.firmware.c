@@ -1,0 +1,80 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_boards.h</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * Ruuvi board selection header, inspired by Nordic Semiconductor &quot;boards.h&quot; and &quot;custom_board.h&quot;</a>
+<a name="ln3"> *</a>
+<a name="ln4"> * If you wish to compile for your proprietary board, please define BOARD_PROPIETARY in C preprocessor macros.</a>
+<a name="ln5"> * You should also define the board name, for example BOARD_RUUVITAG_B for the preprocessor.</a>
+<a name="ln6"> *</a>
+<a name="ln7"> * License: BSD-3</a>
+<a name="ln8"> * Author: Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln9"> */</a>
+<a name="ln10">#ifndef RUUVI_BOARDS_H</a>
+<a name="ln11">#define RUUVI_BOARDS_H</a>
+<a name="ln12"> </a>
+<a name="ln13">#ifdef BOARD_PROPRIETARY</a>
+<a name="ln14">  #include &quot;proprietary_board.h&quot;</a>
+<a name="ln15">#endif</a>
+<a name="ln16">#ifdef BOARD_RUUVITAG_B</a>
+<a name="ln17">  #include &quot;ruuvi_board_ruuvitag_b.h&quot;</a>
+<a name="ln18">#endif</a>
+<a name="ln19">#ifdef BOARD_KAARLE</a>
+<a name="ln20">  #include &quot;ruuvi_board_kaarle.h&quot;</a>
+<a name="ln21">#endif</a>
+<a name="ln22">#ifdef BOARD_KALERVO</a>
+<a name="ln23">  #include &quot;ruuvi_board_kalervo.h&quot;</a>
+<a name="ln24">#endif</a>
+<a name="ln25">#ifdef BOARD_KEIJO</a>
+<a name="ln26">  #include &quot;ruuvi_board_keijo.h&quot;</a>
+<a name="ln27">#endif</a>
+<a name="ln28">/** @brief Port+pin definition for GPIO pin. */</a>
+<a name="ln29">#define RUUVI_BOARD_PORT_PIN_MAP(PORT, PIN) ((PORT&lt;&lt;8) + (PIN))</a>
+<a name="ln30">/** @brief Pin not in use on this board. */</a>
+<a name="ln31">#define RUUVI_BOARD_PIN_UNUSED              (0xFFFF)</a>
+<a name="ln32"> </a>
+<a name="ln33">#endif</a>
+
+</code></pre>
+<div class="balloon" rel="29"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2546/" target="_blank">V2546</a> Each parameter of the macro should be surrounded by parentheses. Consider inspecting the 'PORT' parameter of the 'RUUVI_BOARD_PORT_PIN_MAP' macro.</p></div>
+<div class="balloon" rel="29"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1003/" target="_blank">V1003</a> The macro 'RUUVI_BOARD_PORT_PIN_MAP' is a dangerous expression. The parameter 'PORT' must be surrounded by parentheses.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,194 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_interface_gpio.h</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#ifndef RUUVI_INTERFACE_GPIO_H</a>
+<a name="ln2">#define RUUVI_INTERFACE_GPIO_H</a>
+<a name="ln3">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln4">#include &lt;stdbool.h&gt;</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @defgroup GPIO GPIO functions</a>
+<a name="ln7"> * @brief Functions for digitally reading and actuating GPIO pins.</a>
+<a name="ln8"> *</a>
+<a name="ln9"> * The GPIO functions do include interrupts, but they do not include PWM,</a>
+<a name="ln10"> * ADC or DAC functions.</a>
+<a name="ln11"> */</a>
+<a name="ln12">/*@{*/</a>
+<a name="ln13">/**</a>
+<a name="ln14"> * @file ruuvi_interface_gpio.h</a>
+<a name="ln15"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln16"> * @date 2019-04-27</a>
+<a name="ln17"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln18"> *</a>
+<a name="ln19"> * Interface for basic GPIO writes and reads</a>
+<a name="ln20"> *</a>
+<a name="ln21"> */</a>
+<a name="ln22"> </a>
+<a name="ln23">#define RUUVI_INTERFACE_GPIO_PORT_UNUSED 0xFF   //!&lt; Use this value to signal that nothing should be done with this port, i.e. UART CTS not used.</a>
+<a name="ln24">#define RUUVI_INTERFACE_GPIO_PIN_UNUSED  0xFF   //!&lt; Use this value to signal that nothing should be done with this pin,  i.e. UART CTS not used.</a>
+<a name="ln25">#define RUUVI_INTERFACE_GPIO_ID_UNUSED   0xFFFF //!&lt; Use this value to signal that nothing should be done with this gpio,  i.e. UART CTS not used.</a>
+<a name="ln26"> </a>
+<a name="ln27">/**</a>
+<a name="ln28"> * GPIO modes supported by interface. If the underlying platform</a>
+<a name="ln29"> * does not support given mode, it shall return @ref RUUVI_DRIVER_ERROR_NOT_SUPPORTED</a>
+<a name="ln30"> * on configuration attempt.</a>
+<a name="ln31"> */</a>
+<a name="ln32">typedef enum</a>
+<a name="ln33">{</a>
+<a name="ln34">  RUUVI_INTERFACE_GPIO_MODE_HIGH_Z,          //!&lt; High-impedance mode, electrically disconnected.</a>
+<a name="ln35">  RUUVI_INTERFACE_GPIO_MODE_INPUT_NOPULL,    //!&lt; Input, can be read. No pull resistors</a>
+<a name="ln36">  RUUVI_INTERFACE_GPIO_MODE_INPUT_PULLUP,    //!&lt; Input, can be read. Pulled up by internal resistor, value depends on IC.</a>
+<a name="ln37">  RUUVI_INTERFACE_GPIO_MODE_INPUT_PULLDOWN,  //!&lt; Input, can be read. Pulled dpwn by internal resistor, value depends on IC.</a>
+<a name="ln38">  RUUVI_INTERFACE_GPIO_MODE_OUTPUT_STANDARD, //!&lt; Push-pull output, can be written.</a>
+<a name="ln39">  RUUVI_INTERFACE_GPIO_MODE_OUTPUT_HIGHDRIVE //!&lt; Push-pull output, can be written. Higher current drive than standard.</a>
+<a name="ln40">} ruuvi_interface_gpio_mode_t;</a>
+<a name="ln41"> </a>
+<a name="ln42">/**</a>
+<a name="ln43"> * @brief States of GPIO pins</a>
+<a name="ln44"> */</a>
+<a name="ln45">typedef enum</a>
+<a name="ln46">{</a>
+<a name="ln47">  RUUVI_INTERFACE_GPIO_LOW = false, //!&lt; GPIO electrically low</a>
+<a name="ln48">  RUUVI_INTERFACE_GPIO_HIGH = true  //!&lt; GPIO electrically high</a>
+<a name="ln49">} ruuvi_interface_gpio_state_t;</a>
+<a name="ln50"> </a>
+<a name="ln51">/**</a>
+<a name="ln52"> * @brief GPIO pin map</a>
+<a name="ln53"> */</a>
+<a name="ln54">typedef struct</a>
+<a name="ln55">{</a>
+<a name="ln56">  uint8_t  pin;  //!&lt; Pin number</a>
+<a name="ln57">  uint8_t  port; //!&lt; Port of the GPIO pin</a>
+<a name="ln58">} ruuvi_interface_gpio_port_pin_t;</a>
+<a name="ln59"> </a>
+<a name="ln60">/** @brief Shorthand for using plain GPIOs in code. */</a>
+<a name="ln61">typedef union</a>
+<a name="ln62">{</a>
+<a name="ln63">  uint16_t pin;                             //&lt;! Single number representing port + pin</a>
+<a name="ln64">  ruuvi_interface_gpio_port_pin_t port_pin; //!&lt; Explicit port + pin</a>
+<a name="ln65">} ruuvi_interface_gpio_id_t;</a>
+<a name="ln66"> </a>
+<a name="ln67">/**</a>
+<a name="ln68"> * @brief Initializes GPIO module. Call this before other GPIO functions.</a>
+<a name="ln69"> * After initialization all GPIO pins shall be in High-Z mode.</a>
+<a name="ln70"> *</a>
+<a name="ln71"> *</a>
+<a name="ln72"> * @return RUUVI_DRIVER_SUCCESS on success</a>
+<a name="ln73"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if GPIO is already initialized</a>
+<a name="ln74"> */</a>
+<a name="ln75">ruuvi_driver_status_t ruuvi_interface_gpio_init(void);</a>
+<a name="ln76"> </a>
+<a name="ln77">/**</a>
+<a name="ln78"> * @brief Uninitializes GPIO module. Call this to reset GPIO to High-Z mode.</a>
+<a name="ln79"> * After uninitialization all GPIO pins shall be in High-Z mode.</a>
+<a name="ln80"> * Uninitialization can be called at any time, but behaviour is not defined</a>
+<a name="ln81"> * if some other peripheral (i.e. SPI) is using GPIO pins.</a>
+<a name="ln82"> *</a>
+<a name="ln83"> * @return RUUVI_DRIVER_SUCCESS on success</a>
+<a name="ln84"> * @return error code from stack on error</a>
+<a name="ln85"> */</a>
+<a name="ln86">ruuvi_driver_status_t ruuvi_interface_gpio_uninit(void);</a>
+<a name="ln87"> </a>
+<a name="ln88">/**</a>
+<a name="ln89"> * @brief return true if GPIO is init, false otherwise.</a>
+<a name="ln90"> *</a>
+<a name="ln91"> * @return @c true if GPIO module is init</a>
+<a name="ln92"> * @return @c false if GPIO module is not init</a>
+<a name="ln93"> */</a>
+<a name="ln94">bool ruuvi_interface_gpio_is_init(void);</a>
+<a name="ln95"> </a>
+<a name="ln96">/**</a>
+<a name="ln97"> * @brief Configure a pin of a port into a mode.</a>
+<a name="ln98"> * If there are several ports the platform driver must implement a conversion function from port + pin to uint8_t.</a>
+<a name="ln99"> *</a>
+<a name="ln100"> * @param pin[in] Pin number.</a>
+<a name="ln101"> * @param mode[in] Mode to set the pin to. See @ref ruuvi_interface_gpio_mode_t for possible values.</a>
+<a name="ln102"> *</a>
+<a name="ln103"> * @return @ref RUUVI_DRIVER_SUCCESS on success, error code on failure.</a>
+<a name="ln104"> * @return @ref RUUVI_DRIVER_ERROR_NOT_SUPPORTED if underlying platform does not support given mode.</a>
+<a name="ln105"> */</a>
+<a name="ln106">ruuvi_driver_status_t ruuvi_interface_gpio_configure(const ruuvi_interface_gpio_id_t pin,</a>
+<a name="ln107">    const ruuvi_interface_gpio_mode_t mode);</a>
+<a name="ln108"> </a>
+<a name="ln109">/**</a>
+<a name="ln110"> * @brief Toggle the state of a pin of a port.</a>
+<a name="ln111"> * If there are several ports the platform driver must implement a conversion function from port + pin to uint8_t.</a>
+<a name="ln112"> *</a>
+<a name="ln113"> * @param pin[in] Pin number.</a>
+<a name="ln114"> *</a>
+<a name="ln115"> * @return RUUVI_DRIVER_SUCCESS on success, error code on failure.</a>
+<a name="ln116"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if pin was not set as an output (optional).</a>
+<a name="ln117"> */</a>
+<a name="ln118">ruuvi_driver_status_t ruuvi_interface_gpio_toggle(const ruuvi_interface_gpio_id_t pin);</a>
+<a name="ln119"> </a>
+<a name="ln120">/**</a>
+<a name="ln121"> * @brief Write a pin of a port into given state</a>
+<a name="ln122"> * If there are several ports the platform driver must implement a conversion function from port + pin to uint8_t.</a>
+<a name="ln123"> *</a>
+<a name="ln124"> * @param pin[in]   Pin number.</a>
+<a name="ln125"> * @param state[in] State to which the pin should be set to. See @ref ruuvi_interface_gpio_state_t for possible values</a>
+<a name="ln126"> *</a>
+<a name="ln127"> * @return RUUVI_DRIVER_SUCCESS on success, error code on failure.</a>
+<a name="ln128"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if pin was not set as an output (optional).</a>
+<a name="ln129"> */</a>
+<a name="ln130">ruuvi_driver_status_t ruuvi_interface_gpio_write(const ruuvi_interface_gpio_id_t pin,</a>
+<a name="ln131">    const ruuvi_interface_gpio_state_t state);</a>
+<a name="ln132"> </a>
+<a name="ln133">/**</a>
+<a name="ln134"> * @brief Read state of a pin of a port into bool high</a>
+<a name="ln135"> * If there are several ports the platform driver must implement a conversion function from port + pin to uint8_t.</a>
+<a name="ln136"> *</a>
+<a name="ln137"> * @param pin[in]   Pin number.</a>
+<a name="ln138"> * @param p_state[out] Pointer to a ruuvi_interface_gpio_state_t which will be set to the state of the pin.</a>
+<a name="ln139"> *</a>
+<a name="ln140"> * @return RUUVI_DRIVER_SUCCESS on success, error code on failure.</a>
+<a name="ln141"> * @return RUUVI_DRIVER_ERROR_NULL if *state is a null pointer.</a>
+<a name="ln142"> * @return RUUVI_DRIVER_ERROR_INVALID_ADDRESS if pointer is invalid for any reason (optional).</a>
+<a name="ln143"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if pin was not set as an input (optional).</a>
+<a name="ln144"> */</a>
+<a name="ln145">ruuvi_driver_status_t ruuvi_interface_gpio_read(const ruuvi_interface_gpio_id_t pin,</a>
+<a name="ln146">    ruuvi_interface_gpio_state_t* const p_state);</a>
+<a name="ln147">/*@}*/</a>
+<a name="ln148">#endif</a>
+
+</code></pre>
+<div class="balloon" rel="61"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2514/" target="_blank">V2514</a> Unions should not be used.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

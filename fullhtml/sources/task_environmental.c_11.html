@@ -1,0 +1,935 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_environmental.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;application_config.h&quot;</a>
+<a name="ln2">#include &quot;data_structures/ruuvi_library_ringbuffer.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln5">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln6">#include &quot;ruuvi_endpoints.h&quot;</a>
+<a name="ln7">#include &quot;ruuvi_interface_atomic.h&quot;</a>
+<a name="ln8">#include &quot;ruuvi_interface_bme280.h&quot;</a>
+<a name="ln9">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln10">#include &quot;ruuvi_interface_environmental_mcu.h&quot;</a>
+<a name="ln11">#include &quot;ruuvi_interface_lis2dh12.h&quot;</a>
+<a name="ln12">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln13">#include &quot;ruuvi_interface_shtcx.h&quot;</a>
+<a name="ln14">#include &quot;ruuvi_interface_timer.h&quot;</a>
+<a name="ln15">#include &quot;ruuvi_interface_tmp117.h&quot;</a>
+<a name="ln16">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln17">#include &quot;ruuvi_interface_yield.h&quot;</a>
+<a name="ln18">#include &quot;task_communication.h&quot;</a>
+<a name="ln19">#include &quot;task_environmental.h&quot;</a>
+<a name="ln20">#include &quot;task_flash.h&quot;</a>
+<a name="ln21">#include &quot;task_rtc.h&quot;</a>
+<a name="ln22">#include &quot;task_sensor.h&quot;</a>
+<a name="ln23">#include &lt;inttypes.h&gt;</a>
+<a name="ln24">#include &lt;stddef.h&gt;</a>
+<a name="ln25">#include &lt;stdio.h&gt;</a>
+<a name="ln26">#include &lt;string.h&gt;</a>
+<a name="ln27"> </a>
+<a name="ln28">#ifndef TASK_ENVIRONMENTAL_LOG_LEVEL</a>
+<a name="ln29">#define TASK_ENVIRONMENTAL_LOG_LEVEL RUUVI_INTERFACE_LOG_INFO</a>
+<a name="ln30">#endif</a>
+<a name="ln31"> </a>
+<a name="ln32">#define LOG(msg) ruuvi_interface_log(TASK_ENVIRONMENTAL_LOG_LEVEL, msg)</a>
+<a name="ln33">#define LOGD(msg) ruuvi_interface_log(RUUVI_INTERFACE_LOG_DEBUG, msg)</a>
+<a name="ln34">#define LOGW(msg) ruuvi_interface_log(RUUVI_INTERFACE_LOG_WARNING, msg)</a>
+<a name="ln35">#define LOGHEX(msg, len) ruuvi_interface_log_hex(TASK_ENVIRONMENTAL_LOG_LEVEL, msg, len)</a>
+<a name="ln36"> </a>
+<a name="ln37">static ruuvi_interface_timer_id_t m_log_timer;               //!&lt; Timer for logging data</a>
+<a name="ln38"> </a>
+<a name="ln39">// Do not compile space for unused sensor drivers.</a>
+<a name="ln40">// Define enum in order of default preference of sensor being used.</a>
+<a name="ln41">// Default sensor can be overridden by calling a backend_set function.</a>
+<a name="ln42">enum</a>
+<a name="ln43">{</a>
+<a name="ln44">#if APPLICATION_ENVIRONMENTAL_TMP117_ENABLED</a>
+<a name="ln45">    ENV_TMP117_INDEX,</a>
+<a name="ln46">#endif</a>
+<a name="ln47">#if APPLICATION_ENVIRONMENTAL_SHTCX_ENABLED</a>
+<a name="ln48">    ENV_SHTCX_INDEX,</a>
+<a name="ln49">#endif</a>
+<a name="ln50">#if APPLICATION_ENVIRONMENTAL_BME280_ENABLED</a>
+<a name="ln51">    ENV_BME280_INDEX,</a>
+<a name="ln52">#endif</a>
+<a name="ln53">#if APPLICATION_ENVIRONMENTAL_NTC_ENABLED</a>
+<a name="ln54">    ENV_NTC_INDEX,</a>
+<a name="ln55">#endif</a>
+<a name="ln56">#if APPLICATION_ENVIRONMENTAL_MCU_ENABLED</a>
+<a name="ln57">    ENV_MCU_INDEX,</a>
+<a name="ln58">#endif</a>
+<a name="ln59">#if APPLICATION_ENVIRONMENTAL_LIS2DH12_ENABLED</a>
+<a name="ln60">    ENV_LIS2DH12_INDEX,</a>
+<a name="ln61">#endif</a>
+<a name="ln62">    ENV_SENSOR_COUNT</a>
+<a name="ln63">};</a>
+<a name="ln64">static ruuvi_driver_sensor_t  m_environmental_sensors[ENV_SENSOR_COUNT] = {0}; //!&lt; Sensor APIs.</a>
+<a name="ln65">static ruuvi_driver_sensor_t * m_active_sensor =</a>
+<a name="ln66">    NULL; //!&lt; Sensor being used by application.</a>
+<a name="ln67"> </a>
+<a name="ln68">static uint8_t</a>
+<a name="ln69">buffer[APPLICATION_ENVIRONMENTAL_RAMBUFFER_SIZE]; //!&lt; Raw buffer for environmental logs.</a>
+<a name="ln70">static ruuvi_interface_atomic_t buffer_wlock; //!&lt; Lock for writing to ringbuffer.</a>
+<a name="ln71">static ruuvi_interface_atomic_t buffer_rlock; //!&lt; Lock for reading from ringbuffer.</a>
+<a name="ln72">/** @brief Buffer structure for outgoing data */</a>
+<a name="ln73">static ruuvi_library_ringbuffer_t ringbuf = {.head = 0,</a>
+<a name="ln74">                                             .tail = 0,</a>
+<a name="ln75">                                             .block_size = sizeof (environmental_log_t),</a>
+<a name="ln76">                                             .storage_size = sizeof (buffer),</a>
+<a name="ln77">                                             .index_mask = (sizeof (buffer) / sizeof (environmental_log_t)) - 1,</a>
+<a name="ln78">                                             .storage = buffer,</a>
+<a name="ln79">                                             .lock = ruuvi_interface_atomic_flag,</a>
+<a name="ln80">                                             .writelock = &amp;buffer_wlock,</a>
+<a name="ln81">                                             .readlock  = &amp;buffer_rlock</a>
+<a name="ln82">                                            };</a>
+<a name="ln83"> </a>
+<a name="ln84">static task_communication_api_t environmental_api =</a>
+<a name="ln85">{</a>
+<a name="ln86">    .sensor      = &amp;m_active_sensor,</a>
+<a name="ln87">    .offset_set  = NULL,</a>
+<a name="ln88">    .offset_get  = NULL,</a>
+<a name="ln89">    .data_target = NULL,</a>
+<a name="ln90">    .log_cfg     = NULL,</a>
+<a name="ln91">    .log_read    = task_environmental_log_read</a>
+<a name="ln92">};</a>
+<a name="ln93"> </a>
+<a name="ln94">ruuvi_driver_status_t task_environmental_api_get (task_communication_api_t ** api)</a>
+<a name="ln95">{</a>
+<a name="ln96">    if (api == NULL)</a>
+<a name="ln97">    {</a>
+<a name="ln98">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln99">    }</a>
+<a name="ln100"> </a>
+<a name="ln101">    *api = &amp;environmental_api;</a>
+<a name="ln102">    LOGD (&quot;Returned API \r\n&quot;);</a>
+<a name="ln103">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln104">}</a>
+<a name="ln105"> </a>
+<a name="ln106">/** @brief Try to initialize SHTCX sensor</a>
+<a name="ln107"> *</a>
+<a name="ln108"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln109"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln110"> * uses application defaults from application_config.h.</a>
+<a name="ln111"> *</a>
+<a name="ln112"> * @return RUUVI_DRIVER_SUCCESS if SHTCX is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln113"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if SHTCX does not reply on bus but it's expected to be available</a>
+<a name="ln114"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln115"> */</a>
+<a name="ln116">static ruuvi_driver_status_t initialize_shtcx (void)</a>
+<a name="ln117">{</a>
+<a name="ln118">#if APPLICATION_ENVIRONMENTAL_SHTCX_ENABLED</a>
+<a name="ln119">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln120">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln121">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_I2C;</a>
+<a name="ln122">    uint8_t handle = RUUVI_BOARD_SHTCX_I2C_ADDRESS;</a>
+<a name="ln123">    // Initialize sensor.</a>
+<a name="ln124">    err_code = ruuvi_interface_shtcx_init (&amp; (m_environmental_sensors[ENV_SHTCX_INDEX]),</a>
+<a name="ln125">                                           bus, handle);</a>
+<a name="ln126"> </a>
+<a name="ln127">    // return if failed.</a>
+<a name="ln128">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln129">    {</a>
+<a name="ln130">        return err_code;</a>
+<a name="ln131">    }</a>
+<a name="ln132"> </a>
+<a name="ln133">    // Wait for flash operation to finish</a>
+<a name="ln134">    while (task_flash_busy());</a>
+<a name="ln135"> </a>
+<a name="ln136">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln137">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln138">                                APPLICATION_FLASH_ENVIRONMENTAL_SHTCX_RECORD,</a>
+<a name="ln139">                                &amp;config,</a>
+<a name="ln140">                                sizeof (config));</a>
+<a name="ln141"> </a>
+<a name="ln142">    // If there is no stored configuration, use defaults. Skip</a>
+<a name="ln143">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln144">    {</a>
+<a name="ln145">        LOG (&quot;SHTCX config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln146">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_SHTCX_DSP_FUNC;</a>
+<a name="ln147">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_SHTCX_DSP_PARAM;</a>
+<a name="ln148">        config.mode          = APPLICATION_ENVIRONMENTAL_SHTCX_MODE;</a>
+<a name="ln149">        config.resolution    = APPLICATION_ENVIRONMENTAL_SHTCX_RESOLUTION;</a>
+<a name="ln150">        config.samplerate    = APPLICATION_ENVIRONMENTAL_SHTCX_SAMPLERATE;</a>
+<a name="ln151">        config.scale         = APPLICATION_ENVIRONMENTAL_SHTCX_SCALE;</a>
+<a name="ln152">        // Store defaults to flash</a>
+<a name="ln153"> </a>
+<a name="ln154">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln155">        {</a>
+<a name="ln156">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln157">                                         APPLICATION_FLASH_ENVIRONMENTAL_SHTCX_RECORD,</a>
+<a name="ln158">                                         &amp;config,</a>
+<a name="ln159">                                         sizeof (config));</a>
+<a name="ln160">        }</a>
+<a name="ln161">    }</a>
+<a name="ln162"> </a>
+<a name="ln163">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln164">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln165"> </a>
+<a name="ln166">    // Wait for flash operation to finish</a>
+<a name="ln167">    while (task_flash_busy());</a>
+<a name="ln168"> </a>
+<a name="ln169">    // Configure sensor</a>
+<a name="ln170">    return task_sensor_configure (&amp; (m_environmental_sensors[ENV_SHTCX_INDEX]), &amp;config, &quot;&quot;);</a>
+<a name="ln171">#else</a>
+<a name="ln172">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln173">#endif</a>
+<a name="ln174">}</a>
+<a name="ln175"> </a>
+<a name="ln176">/** @brief Try to initialize BME280 sensor</a>
+<a name="ln177"> *</a>
+<a name="ln178"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln179"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln180"> * uses application defaults from application_config.h.</a>
+<a name="ln181"> *</a>
+<a name="ln182"> * @return RUUVI_DRIVER_SUCCESS if BME280 is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln183"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if BME280 does not reply on bus but it's expected to be available</a>
+<a name="ln184"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln185"> */</a>
+<a name="ln186">static ruuvi_driver_status_t initialize_bme280 (void)</a>
+<a name="ln187">{</a>
+<a name="ln188">#if APPLICATION_ENVIRONMENTAL_BME280_ENABLED</a>
+<a name="ln189">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln190">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln191">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_FAIL;</a>
+<a name="ln192">    uint8_t handle = 0;</a>
+<a name="ln193"> </a>
+<a name="ln194">    if (RUUVI_BOARD_ENVIRONMENTAL_BME280_SPI_USE)</a>
+<a name="ln195">    {</a>
+<a name="ln196">        bus = RUUVI_DRIVER_BUS_SPI;</a>
+<a name="ln197">        handle = RUUVI_BOARD_SPI_SS_ENVIRONMENTAL_PIN;</a>
+<a name="ln198">    }</a>
+<a name="ln199">    else if (RUUVI_BOARD_ENVIRONMENTAL_BME280_I2C_USE)</a>
+<a name="ln200">    {</a>
+<a name="ln201">        bus = RUUVI_DRIVER_BUS_I2C;</a>
+<a name="ln202">        handle = RUUVI_BOARD_BME280_I2C_ADDRESS;</a>
+<a name="ln203">    }</a>
+<a name="ln204">    else</a>
+<a name="ln205">    {</a>
+<a name="ln206">        return RUUVI_DRIVER_ERROR_NOT_SUPPORTED;</a>
+<a name="ln207">    }</a>
+<a name="ln208"> </a>
+<a name="ln209">    // Initialize sensor.</a>
+<a name="ln210">    err_code = ruuvi_interface_bme280_init (&amp; (m_environmental_sensors[ENV_BME280_INDEX]),</a>
+<a name="ln211">                                            bus, handle);</a>
+<a name="ln212"> </a>
+<a name="ln213">    // return if failed.</a>
+<a name="ln214">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln215">    {</a>
+<a name="ln216">        return err_code;</a>
+<a name="ln217">    }</a>
+<a name="ln218"> </a>
+<a name="ln219">    // Wait for flash operation to finish</a>
+<a name="ln220">    while (task_flash_busy());</a>
+<a name="ln221"> </a>
+<a name="ln222">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln223">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln224">                                APPLICATION_FLASH_ENVIRONMENTAL_BME280_RECORD,</a>
+<a name="ln225">                                &amp;config,</a>
+<a name="ln226">                                sizeof (config));</a>
+<a name="ln227"> </a>
+<a name="ln228">    // If there is no stored configuration, use defaults.</a>
+<a name="ln229">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln230">    {</a>
+<a name="ln231">        LOG (&quot;BME280 config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln232">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_BME280_DSP_FUNC;</a>
+<a name="ln233">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_BME280_DSP_PARAM;</a>
+<a name="ln234">        config.mode          = APPLICATION_ENVIRONMENTAL_BME280_MODE;</a>
+<a name="ln235">        config.resolution    = APPLICATION_ENVIRONMENTAL_BME280_RESOLUTION;</a>
+<a name="ln236">        config.samplerate    = APPLICATION_ENVIRONMENTAL_BME280_SAMPLERATE;</a>
+<a name="ln237">        config.scale         = APPLICATION_ENVIRONMENTAL_BME280_SCALE;</a>
+<a name="ln238"> </a>
+<a name="ln239">        // Store defaults to flash</a>
+<a name="ln240">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln241">        {</a>
+<a name="ln242">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln243">                                         APPLICATION_FLASH_ENVIRONMENTAL_BME280_RECORD,</a>
+<a name="ln244">                                         &amp;config,</a>
+<a name="ln245">                                         sizeof (config));</a>
+<a name="ln246">        }</a>
+<a name="ln247">    }</a>
+<a name="ln248"> </a>
+<a name="ln249">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln250">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln251"> </a>
+<a name="ln252">    // Wait for flash operation to finish</a>
+<a name="ln253">    while (task_flash_busy());</a>
+<a name="ln254"> </a>
+<a name="ln255">    // Configure sensor</a>
+<a name="ln256">    return task_sensor_configure (&amp; (m_environmental_sensors[ENV_BME280_INDEX]), &amp;config, &quot;&quot;);</a>
+<a name="ln257">#else</a>
+<a name="ln258">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln259">#endif</a>
+<a name="ln260">}</a>
+<a name="ln261"> </a>
+<a name="ln262">/** @brief Try to initialize NTC sensor</a>
+<a name="ln263"> *</a>
+<a name="ln264"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln265"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln266"> * uses application defaults from application_config.h.</a>
+<a name="ln267"> *</a>
+<a name="ln268"> * @return RUUVI_DRIVER_SUCCESS if NTC is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln269"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if NTC does not reply on bus but it's expected to be available</a>
+<a name="ln270"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln271"> */</a>
+<a name="ln272">static ruuvi_driver_status_t initialize_ntc (void)</a>
+<a name="ln273">{</a>
+<a name="ln274">#if APPLICATION_ENVIRONMENTAL_NTC_ENABLED</a>
+<a name="ln275">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln276">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln277">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_NONE;</a>
+<a name="ln278">    uint8_t handle = 0;</a>
+<a name="ln279">    // Initialize sensor.</a>
+<a name="ln280">    err_code = ruuvi_interface_environmental_ntc_init (&amp;</a>
+<a name="ln281">               (m_environmental_sensors[ENV_NTC_INDEX]),</a>
+<a name="ln282">               bus, handle);</a>
+<a name="ln283"> </a>
+<a name="ln284">    // return if failed.</a>
+<a name="ln285">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln286">    {</a>
+<a name="ln287">        return err_code;</a>
+<a name="ln288">    }</a>
+<a name="ln289"> </a>
+<a name="ln290">    // Wait for flash operation to finish</a>
+<a name="ln291">    while (task_flash_busy());</a>
+<a name="ln292"> </a>
+<a name="ln293">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln294">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln295">                                APPLICATION_FLASH_ENVIRONMENTAL_NTC_RECORD,</a>
+<a name="ln296">                                &amp;config,</a>
+<a name="ln297">                                sizeof (config));</a>
+<a name="ln298"> </a>
+<a name="ln299">    // If there is no stored configuration, use defaults.</a>
+<a name="ln300">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln301">    {</a>
+<a name="ln302">        LOG (&quot;NTC config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln303">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_NTC_DSP_FUNC;</a>
+<a name="ln304">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_NTC_DSP_PARAM;</a>
+<a name="ln305">        config.mode          = APPLICATION_ENVIRONMENTAL_NTC_MODE;</a>
+<a name="ln306">        config.resolution    = APPLICATION_ENVIRONMENTAL_NTC_RESOLUTION;</a>
+<a name="ln307">        config.samplerate    = APPLICATION_ENVIRONMENTAL_NTC_SAMPLERATE;</a>
+<a name="ln308">        config.scale         = APPLICATION_ENVIRONMENTAL_NTC_SCALE;</a>
+<a name="ln309"> </a>
+<a name="ln310">        // Store defaults to flash</a>
+<a name="ln311">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln312">        {</a>
+<a name="ln313">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln314">                                         APPLICATION_FLASH_ENVIRONMENTAL_NTC_RECORD,</a>
+<a name="ln315">                                         &amp;config,</a>
+<a name="ln316">                                         sizeof (config));</a>
+<a name="ln317">        }</a>
+<a name="ln318">    }</a>
+<a name="ln319"> </a>
+<a name="ln320">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln321">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln322"> </a>
+<a name="ln323">    // Wait for flash operation to finish</a>
+<a name="ln324">    while (task_flash_busy());</a>
+<a name="ln325"> </a>
+<a name="ln326">    // Configure sensor</a>
+<a name="ln327">    return task_sensor_configure (&amp; (m_environmental_sensors[ENV_NTC_INDEX]), &amp;config, &quot;&quot;);</a>
+<a name="ln328">#else</a>
+<a name="ln329">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln330">#endif</a>
+<a name="ln331">}</a>
+<a name="ln332"> </a>
+<a name="ln333">/** @brief Try to initialize MCU sensor</a>
+<a name="ln334"> *</a>
+<a name="ln335"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln336"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln337"> * uses application defaults from application_config.h.</a>
+<a name="ln338"> *</a>
+<a name="ln339"> * @return RUUVI_DRIVER_SUCCESS if MCU is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln340"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if MCU does not reply on bus but it's expected to be available</a>
+<a name="ln341"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln342"> */</a>
+<a name="ln343">static ruuvi_driver_status_t initialize_mcu (void)</a>
+<a name="ln344">{</a>
+<a name="ln345">#if APPLICATION_ENVIRONMENTAL_MCU_ENABLED</a>
+<a name="ln346">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln347">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln348">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_NONE;</a>
+<a name="ln349">    uint8_t handle = 0;</a>
+<a name="ln350">    // Initialize sensor.</a>
+<a name="ln351">    err_code = ruuvi_interface_environmental_mcu_init (&amp;</a>
+<a name="ln352">               (m_environmental_sensors[ENV_MCU_INDEX]),</a>
+<a name="ln353">               bus, handle);</a>
+<a name="ln354"> </a>
+<a name="ln355">    // return if failed.</a>
+<a name="ln356">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln357">    {</a>
+<a name="ln358">        return err_code;</a>
+<a name="ln359">    }</a>
+<a name="ln360"> </a>
+<a name="ln361">    // Wait for flash operation to finish</a>
+<a name="ln362">    while (task_flash_busy());</a>
+<a name="ln363"> </a>
+<a name="ln364">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln365">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln366">                                APPLICATION_FLASH_ENVIRONMENTAL_MCU_RECORD,</a>
+<a name="ln367">                                &amp;config,</a>
+<a name="ln368">                                sizeof (config));</a>
+<a name="ln369"> </a>
+<a name="ln370">    // If there is no stored configuration, use defaults.</a>
+<a name="ln371">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln372">    {</a>
+<a name="ln373">        LOG (&quot;MCU Temp config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln374">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_MCU_DSP_FUNC;</a>
+<a name="ln375">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_MCU_DSP_PARAM;</a>
+<a name="ln376">        config.mode          = APPLICATION_ENVIRONMENTAL_MCU_MODE;</a>
+<a name="ln377">        config.resolution    = APPLICATION_ENVIRONMENTAL_MCU_RESOLUTION;</a>
+<a name="ln378">        config.samplerate    = APPLICATION_ENVIRONMENTAL_MCU_SAMPLERATE;</a>
+<a name="ln379">        config.scale         = APPLICATION_ENVIRONMENTAL_MCU_SCALE;</a>
+<a name="ln380"> </a>
+<a name="ln381">        // Store defaults to flash</a>
+<a name="ln382">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln383">        {</a>
+<a name="ln384">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln385">                                         APPLICATION_FLASH_ENVIRONMENTAL_MCU_RECORD,</a>
+<a name="ln386">                                         &amp;config,</a>
+<a name="ln387">                                         sizeof (config));</a>
+<a name="ln388">        }</a>
+<a name="ln389">    }</a>
+<a name="ln390"> </a>
+<a name="ln391">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln392">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln393"> </a>
+<a name="ln394">    // Wait for flash operation to finish</a>
+<a name="ln395">    while (task_flash_busy());</a>
+<a name="ln396"> </a>
+<a name="ln397">    // Configure sensor</a>
+<a name="ln398">    return task_sensor_configure (&amp; (m_environmental_sensors[ENV_MCU_INDEX]), &amp;config, &quot;&quot;);</a>
+<a name="ln399">#else</a>
+<a name="ln400">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln401">#endif</a>
+<a name="ln402">}</a>
+<a name="ln403"> </a>
+<a name="ln404">/** @brief Try to initialize LIS2DH12 as environmental sensor</a>
+<a name="ln405"> *</a>
+<a name="ln406"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln407"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln408"> * uses application defaults from application_config.h.</a>
+<a name="ln409"> *</a>
+<a name="ln410"> * @return RUUVI_DRIVER_SUCCESS if LIS2DH12 environmental is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln411"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if LIS2DH12 environmental does not reply on bus but it's expected to be available</a>
+<a name="ln412"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln413"> */</a>
+<a name="ln414">static ruuvi_driver_status_t initialize_lis2dh12 (void)</a>
+<a name="ln415">{</a>
+<a name="ln416">#if APPLICATION_ENVIRONMENTAL_LIS2DH12_ENABLED</a>
+<a name="ln417">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln418">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln419">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_FAIL;</a>
+<a name="ln420">    uint8_t handle = 0;</a>
+<a name="ln421"> </a>
+<a name="ln422">    if (RUUVI_BOARD_ACCELEROMETER_LIS2DH12_SPI_USE)</a>
+<a name="ln423">    {</a>
+<a name="ln424">        bus = RUUVI_DRIVER_BUS_SPI;</a>
+<a name="ln425">        handle = RUUVI_BOARD_SPI_SS_ACCELEROMETER_PIN;</a>
+<a name="ln426">    }</a>
+<a name="ln427">    else</a>
+<a name="ln428">    {</a>
+<a name="ln429">        return RUUVI_DRIVER_ERROR_NOT_IMPLEMENTED;</a>
+<a name="ln430">    }</a>
+<a name="ln431"> </a>
+<a name="ln432">    // Initialize sensor.</a>
+<a name="ln433">    err_code = ruuvi_interface_lis2dh12_init (&amp; (m_environmental_sensors[ENV_LIS2DH12_INDEX]),</a>
+<a name="ln434">               bus, handle);</a>
+<a name="ln435"> </a>
+<a name="ln436">    // return if failed.</a>
+<a name="ln437">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln438">    {</a>
+<a name="ln439">        return err_code;</a>
+<a name="ln440">    }</a>
+<a name="ln441"> </a>
+<a name="ln442">    // Wait for flash operation to finish</a>
+<a name="ln443">    while (task_flash_busy());</a>
+<a name="ln444"> </a>
+<a name="ln445">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln446">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln447">                                APPLICATION_FLASH_ENVIRONMENTAL_LIS2DH12_RECORD,</a>
+<a name="ln448">                                &amp;config,</a>
+<a name="ln449">                                sizeof (config));</a>
+<a name="ln450"> </a>
+<a name="ln451">    // If there is no stored configuration, use defaults.</a>
+<a name="ln452">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln453">    {</a>
+<a name="ln454">        LOG (&quot;LIS2DH12 temp config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln455">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_LIS2DH12_DSP_FUNC;</a>
+<a name="ln456">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_LIS2DH12_DSP_PARAM;</a>
+<a name="ln457">        config.mode          = APPLICATION_ENVIRONMENTAL_LIS2DH12_MODE;</a>
+<a name="ln458">        config.resolution    = APPLICATION_ENVIRONMENTAL_LIS2DH12_RESOLUTION;</a>
+<a name="ln459">        config.samplerate    = APPLICATION_ENVIRONMENTAL_LIS2DH12_SAMPLERATE;</a>
+<a name="ln460">        config.scale         = APPLICATION_ENVIRONMENTAL_LIS2DH12_SCALE;</a>
+<a name="ln461"> </a>
+<a name="ln462">        // Store defaults to flash</a>
+<a name="ln463">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln464">        {</a>
+<a name="ln465">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln466">                                         APPLICATION_FLASH_ENVIRONMENTAL_LIS2DH12_RECORD,</a>
+<a name="ln467">                                         &amp;config,</a>
+<a name="ln468">                                         sizeof (config));</a>
+<a name="ln469">        }</a>
+<a name="ln470">    }</a>
+<a name="ln471"> </a>
+<a name="ln472">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln473">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln474"> </a>
+<a name="ln475">    // Wait for flash operation to finish</a>
+<a name="ln476">    while (task_flash_busy());</a>
+<a name="ln477"> </a>
+<a name="ln478">    // Configure sensor</a>
+<a name="ln479">    return task_sensor_configure (&amp; (m_environmental_sensors[ENV_LIS2DH12_INDEX]), &amp;config,</a>
+<a name="ln480">                                  &quot;&quot;);</a>
+<a name="ln481">#else</a>
+<a name="ln482">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln483">#endif</a>
+<a name="ln484">}</a>
+<a name="ln485"> </a>
+<a name="ln486">/** @brief Try to initialize TMP117 as environmental sensor</a>
+<a name="ln487"> *</a>
+<a name="ln488"> * Looks up appropriate pin definitions from ruuvi_boards.h</a>
+<a name="ln489"> * Tries to load driver configuration from flash. If flash configuration is not available,</a>
+<a name="ln490"> * uses application defaults from application_config.h.</a>
+<a name="ln491"> *</a>
+<a name="ln492"> * @return RUUVI_DRIVER_SUCCESS if TMP117 environmental is not enabled at compile time or if sensor is initialized.</a>
+<a name="ln493"> * @return RUUVI_DRIVER_ERROR_NOT_FOUND if TMP117 environmental does not reply on bus but it's expected to be available</a>
+<a name="ln494"> * @return RUUVI_DRIVER_ERROR_INVALID_STATE if some other user has already initialized the driver.</a>
+<a name="ln495"> */</a>
+<a name="ln496">static ruuvi_driver_status_t initialize_tmp117 (void)</a>
+<a name="ln497">{</a>
+<a name="ln498">#if APPLICATION_ENVIRONMENTAL_TMP117_ENABLED</a>
+<a name="ln499">    // Assume &quot;Not found&quot;, gets set to &quot;Success&quot; if a usable sensor is present</a>
+<a name="ln500">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln501">    ruuvi_driver_bus_t bus = RUUVI_DRIVER_BUS_I2C;</a>
+<a name="ln502">    uint8_t handle = RUUVI_BOARD_TMP117_I2C_ADDRESS;</a>
+<a name="ln503">    // Initialize sensor.</a>
+<a name="ln504">    err_code = ruuvi_interface_tmp117_init (&amp; (m_environmental_sensors[ENV_TMP117_INDEX]),</a>
+<a name="ln505">                                            bus, handle);</a>
+<a name="ln506"> </a>
+<a name="ln507">    // return if failed.</a>
+<a name="ln508">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln509">    {</a>
+<a name="ln510">        return err_code;</a>
+<a name="ln511">    }</a>
+<a name="ln512"> </a>
+<a name="ln513">    // Wait for flash operation to finish</a>
+<a name="ln514">    while (task_flash_busy());</a>
+<a name="ln515"> </a>
+<a name="ln516">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln517">    err_code = task_flash_load (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln518">                                APPLICATION_FLASH_ENVIRONMENTAL_TMP117_RECORD,</a>
+<a name="ln519">                                &amp;config,</a>
+<a name="ln520">                                sizeof (config));</a>
+<a name="ln521"> </a>
+<a name="ln522">    // If there is no stored configuration, use defaults.</a>
+<a name="ln523">    if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln524">    {</a>
+<a name="ln525">        LOG (&quot;TMP117 config not found on flash, using defaults\r\n&quot;);</a>
+<a name="ln526">        config.dsp_function  = APPLICATION_ENVIRONMENTAL_TMP117_DSP_FUNC;</a>
+<a name="ln527">        config.dsp_parameter = APPLICATION_ENVIRONMENTAL_TMP117_DSP_PARAM;</a>
+<a name="ln528">        config.mode          = APPLICATION_ENVIRONMENTAL_TMP117_MODE;</a>
+<a name="ln529">        config.resolution    = APPLICATION_ENVIRONMENTAL_TMP117_RESOLUTION;</a>
+<a name="ln530">        config.samplerate    = APPLICATION_ENVIRONMENTAL_TMP117_SAMPLERATE;</a>
+<a name="ln531">        config.scale         = APPLICATION_ENVIRONMENTAL_TMP117_SCALE;</a>
+<a name="ln532"> </a>
+<a name="ln533">        // Store defaults to flash</a>
+<a name="ln534">        if (RUUVI_DRIVER_ERROR_NOT_SUPPORTED != err_code)</a>
+<a name="ln535">        {</a>
+<a name="ln536">            err_code = task_flash_store (APPLICATION_FLASH_ENVIRONMENTAL_FILE,</a>
+<a name="ln537">                                         APPLICATION_FLASH_ENVIRONMENTAL_TMP117_RECORD,</a>
+<a name="ln538">                                         &amp;config,</a>
+<a name="ln539">                                         sizeof (config));</a>
+<a name="ln540">        }</a>
+<a name="ln541">    }</a>
+<a name="ln542"> </a>
+<a name="ln543">    // Check flash operation status, allow not supported in case we're on 811</a>
+<a name="ln544">    RUUVI_DRIVER_ERROR_CHECK (err_code, RUUVI_DRIVER_ERROR_NOT_SUPPORTED);</a>
+<a name="ln545"> </a>
+<a name="ln546">    // Wait for flash operation to finish</a>
+<a name="ln547">    while (task_flash_busy());</a>
+<a name="ln548"> </a>
+<a name="ln549">    // Configure sensor</a>
+<a name="ln550">    err_code |= task_sensor_configure (&amp; (m_environmental_sensors[ENV_TMP117_INDEX]), &amp;config,</a>
+<a name="ln551">                                       &quot;&quot;);</a>
+<a name="ln552">    return err_code;</a>
+<a name="ln553">#else</a>
+<a name="ln554">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln555">#endif</a>
+<a name="ln556">}</a>
+<a name="ln557"> </a>
+<a name="ln558">static void execute_log (void * event, uint16_t event_size)</a>
+<a name="ln559">{</a>
+<a name="ln560">    static uint32_t tick_count = 0;</a>
+<a name="ln561">    uint32_t interval_ms = APPLICATION_ENVIRONMENTAL_LOG_INTERVAL_MS;</a>
+<a name="ln562">    uint32_t tick_interval = APPLICATION_ENVIRONMENTAL_TICK_MS;</a>
+<a name="ln563">    const uint32_t ticks_per_log = interval_ms / tick_interval;</a>
+<a name="ln564"> </a>
+<a name="ln565">    if (0 == tick_count)</a>
+<a name="ln566">    {</a>
+<a name="ln567">        task_environmental_log();</a>
+<a name="ln568">    }</a>
+<a name="ln569"> </a>
+<a name="ln570">    tick_count = (ticks_per_log &lt;= tick_count) ? 0 : (tick_count + 1);</a>
+<a name="ln571">}</a>
+<a name="ln572"> </a>
+<a name="ln573">static void schedule_log (void * p_context)</a>
+<a name="ln574">{</a>
+<a name="ln575">    ruuvi_interface_scheduler_event_put (NULL, 0, execute_log);</a>
+<a name="ln576">}</a>
+<a name="ln577"> </a>
+<a name="ln578">ruuvi_driver_status_t task_environmental_init (void)</a>
+<a name="ln579">{</a>
+<a name="ln580">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln581">    // Attempt to initialize all possible temperature backends.</a>
+<a name="ln582">    err_code |= initialize_tmp117();</a>
+<a name="ln583">    err_code |= initialize_shtcx();</a>
+<a name="ln584">    err_code |= initialize_bme280();</a>
+<a name="ln585">    err_code |= initialize_ntc();</a>
+<a name="ln586">    err_code |= initialize_mcu();</a>
+<a name="ln587">    err_code |= initialize_lis2dh12();</a>
+<a name="ln588"> </a>
+<a name="ln589">    // Use first valid backend as the default provider.</a>
+<a name="ln590">    for (int ii = 0; ii &lt; ENV_SENSOR_COUNT; ii++)</a>
+<a name="ln591">    {</a>
+<a name="ln592">        if (m_environmental_sensors[ii].provides.bitfield)</a>
+<a name="ln593">        {</a>
+<a name="ln594">            m_active_sensor = &amp; (m_environmental_sensors[ii]);</a>
+<a name="ln595">            break;</a>
+<a name="ln596">        }</a>
+<a name="ln597">    }</a>
+<a name="ln598"> </a>
+<a name="ln599">    // XXX - use generic logging</a>
+<a name="ln600">    if (NULL == m_log_timer)</a>
+<a name="ln601">    {</a>
+<a name="ln602">        ruuvi_interface_timer_create (&amp;m_log_timer, RUUVI_INTERFACE_TIMER_MODE_REPEATED,</a>
+<a name="ln603">                                      schedule_log);</a>
+<a name="ln604">    }</a>
+<a name="ln605"> </a>
+<a name="ln606">    ruuvi_interface_timer_start (m_log_timer, APPLICATION_ENVIRONMENTAL_TICK_MS);</a>
+<a name="ln607">    // Log environmental conditions at start</a>
+<a name="ln608">    ruuvi_interface_scheduler_event_put (NULL, 0, execute_log);</a>
+<a name="ln609">    return (NULL == m_active_sensor) ? RUUVI_DRIVER_ERROR_NOT_FOUND : RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln610">}</a>
+<a name="ln611"> </a>
+<a name="ln612">ruuvi_driver_status_t task_environmental_sample (void)</a>
+<a name="ln613">{</a>
+<a name="ln614">    if (NULL == m_active_sensor-&gt;mode_set)</a>
+<a name="ln615">    {</a>
+<a name="ln616">        return RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln617">    }</a>
+<a name="ln618"> </a>
+<a name="ln619">    uint8_t mode = RUUVI_DRIVER_SENSOR_CFG_SINGLE;</a>
+<a name="ln620">    return m_active_sensor-&gt;mode_set (&amp;mode);</a>
+<a name="ln621">}</a>
+<a name="ln622"> </a>
+<a name="ln623">ruuvi_driver_status_t task_environmental_data_get (ruuvi_driver_sensor_data_t * const</a>
+<a name="ln624">        p_data)</a>
+<a name="ln625">{</a>
+<a name="ln626">    if (NULL == p_data)</a>
+<a name="ln627">    {</a>
+<a name="ln628">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln629">    }</a>
+<a name="ln630"> </a>
+<a name="ln631">    if (NULL == m_active_sensor-&gt;data_get)</a>
+<a name="ln632">    {</a>
+<a name="ln633">        return RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln634">    }</a>
+<a name="ln635"> </a>
+<a name="ln636">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln637">    err_code = m_active_sensor-&gt;data_get (p_data);</a>
+<a name="ln638">    return err_code;</a>
+<a name="ln639">}</a>
+<a name="ln640"> </a>
+<a name="ln641">ruuvi_driver_status_t task_environmental_log (void)</a>
+<a name="ln642">{</a>
+<a name="ln643">    ruuvi_driver_sensor_data_t data = {0};</a>
+<a name="ln644">    float values[3];</a>
+<a name="ln645">    data.data = values;</a>
+<a name="ln646">    data.fields.datas.temperature_c = 1;</a>
+<a name="ln647">    data.fields.datas.humidity_rh = 1;</a>
+<a name="ln648">    data.fields.datas.pressure_pa = 1;</a>
+<a name="ln649">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln650">    err_code |= task_environmental_data_get (&amp;data);</a>
+<a name="ln651">    RUUVI_DRIVER_ERROR_CHECK (err_code, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln652">    uint64_t sampletime = data.timestamp_ms / 1000;</a>
+<a name="ln653">    uint32_t logtime    = (uint32_t) sampletime;</a>
+<a name="ln654">    uint64_t systime = task_rtc_millis() / 1000;</a>
+<a name="ln655"> </a>
+<a name="ln656">    if (logtime &gt; systime)</a>
+<a name="ln657">    {</a>
+<a name="ln658">        LOGW (&quot;Stored sample in the future\r\n&quot;);</a>
+<a name="ln659">    }</a>
+<a name="ln660"> </a>
+<a name="ln661">    environmental_log_t log = { .timestamp_s   = logtime,</a>
+<a name="ln662">                                .temperature_c = ruuvi_driver_sensor_data_parse (&amp;data, (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln663">    {</a>
+<a name="ln664">        .datas.temperature_c = 1</a>
+<a name="ln665">    }),</a>
+<a name="ln666">    .humidity_rh   = ruuvi_driver_sensor_data_parse (&amp;data, (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln667">    {</a>
+<a name="ln668">        .datas.humidity_rh = 1</a>
+<a name="ln669">    }),</a>
+<a name="ln670">    .pressure_pa   = ruuvi_driver_sensor_data_parse (&amp;data, (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln671">    {</a>
+<a name="ln672">        .datas.pressure_pa = 1</a>
+<a name="ln673">    })</a>
+<a name="ln674">                              };</a>
+<a name="ln675">    ruuvi_library_status_t status = ruuvi_library_ringbuffer_queue (&amp;ringbuf, &amp;log,</a>
+<a name="ln676">                                    sizeof (log));</a>
+<a name="ln677"> </a>
+<a name="ln678">    // Drop old sample if buffer is full</a>
+<a name="ln679">    if (RUUVI_LIBRARY_ERROR_NO_MEM == status)</a>
+<a name="ln680">    {</a>
+<a name="ln681">        LOG (&quot;Discarded data... &quot;);</a>
+<a name="ln682">        environmental_log_t drop;</a>
+<a name="ln683">        status = ruuvi_library_ringbuffer_dequeue (&amp;ringbuf, &amp;drop);</a>
+<a name="ln684">        status |= ruuvi_library_ringbuffer_queue (&amp;ringbuf, &amp;log, sizeof (log));</a>
+<a name="ln685">    }</a>
+<a name="ln686"> </a>
+<a name="ln687">    RUUVI_DRIVER_ERROR_CHECK (status, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln688"> </a>
+<a name="ln689">    if (RUUVI_DRIVER_SUCCESS == (status | err_code))</a>
+<a name="ln690">    {</a>
+<a name="ln691">        LOG (&quot;Stored data\r\n&quot;);</a>
+<a name="ln692">    }</a>
+<a name="ln693"> </a>
+<a name="ln694">    return status | err_code;</a>
+<a name="ln695">}</a>
+<a name="ln696"> </a>
+<a name="ln697">ruuvi_driver_status_t task_environmental_log_read (const</a>
+<a name="ln698">        ruuvi_interface_communication_xfer_fp_t reply_fp,</a>
+<a name="ln699">        const ruuvi_interface_communication_message_t * const query)</a>
+<a name="ln700">{</a>
+<a name="ln701">    LOG (&quot;Preparing to send logs\r\n&quot;);</a>
+<a name="ln702">    ruuvi_interface_communication_message_t msg = { 0 };</a>
+<a name="ln703">    uint64_t systime = task_rtc_millis() / 1000;</a>
+<a name="ln704">    uint32_t now = (query-&gt;data[3] &lt;&lt; 24) +</a>
+<a name="ln705">                   (query-&gt;data[4] &lt;&lt; 16) +</a>
+<a name="ln706">                   (query-&gt;data[5] &lt;&lt; 8) +</a>
+<a name="ln707">                   (query-&gt;data[6] &lt;&lt; 0);</a>
+<a name="ln708">    uint32_t start = (query-&gt;data[7] &lt;&lt; 24) +</a>
+<a name="ln709">                     (query-&gt;data[8] &lt;&lt; 16) +</a>
+<a name="ln710">                     (query-&gt;data[9] &lt;&lt; 8) +</a>
+<a name="ln711">                     (query-&gt;data[10] &lt;&lt; 0);</a>
+<a name="ln712">    uint32_t offset = (now &gt; systime) ? now - systime : 0;</a>
+<a name="ln713">    environmental_log_t * p_log;</a>
+<a name="ln714">    msg.data_length = RUUVI_ENDPOINT_STANDARD_MESSAGE_LENGTH;</a>
+<a name="ln715">    msg.data[0] = query-&gt;data[1];</a>
+<a name="ln716">    msg.data[1] = query-&gt;data[0];</a>
+<a name="ln717">    msg.data[2] = RUUVI_ENDPOINT_STANDARD_LOG_VALUE_WRITE;</a>
+<a name="ln718">    ruuvi_library_status_t status = RUUVI_LIBRARY_SUCCESS;</a>
+<a name="ln719">    // As long as we have more elements</a>
+<a name="ln720">    size_t index = 0;</a>
+<a name="ln721"> </a>
+<a name="ln722">    do</a>
+<a name="ln723">    {</a>
+<a name="ln724">        status = ruuvi_library_ringbuffer_peek (&amp;ringbuf, &amp;p_log, index++);</a>
+<a name="ln725"> </a>
+<a name="ln726">        // Send logged element</a>
+<a name="ln727">        if (RUUVI_LIBRARY_SUCCESS == status)</a>
+<a name="ln728">        {</a>
+<a name="ln729">            // Calculate real time of event</a>
+<a name="ln730">            uint32_t timestamp = offset + p_log-&gt;timestamp_s;</a>
+<a name="ln731"> </a>
+<a name="ln732">            // Check if the event is in range to send. Continue if not</a>
+<a name="ln733">            if (0 == p_log-&gt;timestamp_s)</a>
+<a name="ln734">            {</a>
+<a name="ln735">                LOG (&quot;WARNING: Empty element\r\n&quot;);</a>
+<a name="ln736">                continue;</a>
+<a name="ln737">            }</a>
+<a name="ln738"> </a>
+<a name="ln739">            if (now - offset &lt; p_log-&gt;timestamp_s)</a>
+<a name="ln740">            {</a>
+<a name="ln741">                LOG (&quot;WARNING: Element in future\r\n&quot;);</a>
+<a name="ln742">                continue;</a>
+<a name="ln743">            }</a>
+<a name="ln744"> </a>
+<a name="ln745">            if (now - offset - p_log-&gt;timestamp_s &gt; (2 * (ringbuf.index_mask *</a>
+<a name="ln746">                    (APPLICATION_ENVIRONMENTAL_LOG_INTERVAL_MS / 1000))))</a>
+<a name="ln747">            {</a>
+<a name="ln748">                LOG (&quot;WARNING: Element in distant past\r\n&quot;);</a>
+<a name="ln749">                continue;</a>
+<a name="ln750">            }</a>
+<a name="ln751"> </a>
+<a name="ln752">            if (start &gt; timestamp)</a>
+<a name="ln753">            {</a>
+<a name="ln754">                continue;</a>
+<a name="ln755">            }</a>
+<a name="ln756"> </a>
+<a name="ln757">            msg.data[3] = timestamp &gt;&gt; 24;</a>
+<a name="ln758">            msg.data[4] = timestamp &gt;&gt; 16;</a>
+<a name="ln759">            msg.data[5] = timestamp &gt;&gt; 8;</a>
+<a name="ln760">            msg.data[6] = timestamp &gt;&gt; 0;</a>
+<a name="ln761">            uint8_t destination = query-&gt;data[0];</a>
+<a name="ln762"> </a>
+<a name="ln763">            // send temp, humi, pressure</a>
+<a name="ln764">            if (RUUVI_ENDPOINT_STANDARD_DESTINATION_ENVIRONMENTAL == destination ||</a>
+<a name="ln765">                    RUUVI_ENDPOINT_STANDARD_DESTINATION_TEMPERATURE   == destination)</a>
+<a name="ln766">            {</a>
+<a name="ln767">                int32_t temperature_cc = p_log-&gt;temperature_c * 100;</a>
+<a name="ln768">                msg.data[1] = RUUVI_ENDPOINT_STANDARD_DESTINATION_TEMPERATURE;</a>
+<a name="ln769">                msg.data[7] = temperature_cc &gt;&gt; 24;</a>
+<a name="ln770">                msg.data[8] = temperature_cc &gt;&gt; 16;</a>
+<a name="ln771">                msg.data[9] = temperature_cc &gt;&gt; 8;</a>
+<a name="ln772">                msg.data[10] = temperature_cc &gt;&gt; 0;</a>
+<a name="ln773"> </a>
+<a name="ln774">                // Repeat sending here</a>
+<a name="ln775">                while (RUUVI_LIBRARY_ERROR_NO_MEM == reply_fp (&amp;msg))</a>
+<a name="ln776">                {</a>
+<a name="ln777">                    // Sleep</a>
+<a name="ln778">                    ruuvi_interface_yield();</a>
+<a name="ln779">                }</a>
+<a name="ln780">            }</a>
+<a name="ln781"> </a>
+<a name="ln782">            if (RUUVI_ENDPOINT_STANDARD_DESTINATION_ENVIRONMENTAL == destination ||</a>
+<a name="ln783">                    RUUVI_ENDPOINT_STANDARD_DESTINATION_HUMIDITY      == destination)</a>
+<a name="ln784">            {</a>
+<a name="ln785">                uint32_t humidity_crh = p_log-&gt;humidity_rh * 100;</a>
+<a name="ln786">                msg.data[1] = RUUVI_ENDPOINT_STANDARD_DESTINATION_HUMIDITY;</a>
+<a name="ln787">                msg.data[7]  = humidity_crh &gt;&gt; 24;</a>
+<a name="ln788">                msg.data[8]  = humidity_crh &gt;&gt; 16;</a>
+<a name="ln789">                msg.data[9]  = humidity_crh &gt;&gt; 8;</a>
+<a name="ln790">                msg.data[10] = humidity_crh &gt;&gt; 0;</a>
+<a name="ln791"> </a>
+<a name="ln792">                // Repeat sending here</a>
+<a name="ln793">                while (RUUVI_LIBRARY_ERROR_NO_MEM == reply_fp (&amp;msg))</a>
+<a name="ln794">                {</a>
+<a name="ln795">                    // Sleep</a>
+<a name="ln796">                    ruuvi_interface_yield();</a>
+<a name="ln797">                }</a>
+<a name="ln798">            }</a>
+<a name="ln799"> </a>
+<a name="ln800">            if (RUUVI_ENDPOINT_STANDARD_DESTINATION_ENVIRONMENTAL == destination ||</a>
+<a name="ln801">                    RUUVI_ENDPOINT_STANDARD_DESTINATION_PRESSURE      == destination)</a>
+<a name="ln802">            {</a>
+<a name="ln803">                if (isnan (p_log-&gt;pressure_pa))</a>
+<a name="ln804">                {</a>
+<a name="ln805">                    continue;</a>
+<a name="ln806">                }</a>
+<a name="ln807"> </a>
+<a name="ln808">                uint32_t pressure_pa = p_log-&gt;pressure_pa;</a>
+<a name="ln809">                msg.data[1] = RUUVI_ENDPOINT_STANDARD_DESTINATION_PRESSURE;</a>
+<a name="ln810">                msg.data[7]  = pressure_pa &gt;&gt; 24;</a>
+<a name="ln811">                msg.data[8]  = pressure_pa &gt;&gt; 16;</a>
+<a name="ln812">                msg.data[9]  = pressure_pa &gt;&gt; 8;</a>
+<a name="ln813">                msg.data[10] = pressure_pa &gt;&gt; 0;</a>
+<a name="ln814"> </a>
+<a name="ln815">                // Repeat sending here</a>
+<a name="ln816">                while (RUUVI_LIBRARY_ERROR_NO_MEM == reply_fp (&amp;msg))</a>
+<a name="ln817">                {</a>
+<a name="ln818">                    // Sleep</a>
+<a name="ln819">                    ruuvi_interface_yield();</a>
+<a name="ln820">                }</a>
+<a name="ln821">            }</a>
+<a name="ln822">        }</a>
+<a name="ln823">    } while (RUUVI_LIBRARY_SUCCESS == status);</a>
+<a name="ln824"> </a>
+<a name="ln825">    LOG (&quot;Logs sent\r\n&quot;);</a>
+<a name="ln826">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln827">}</a>
+<a name="ln828"> </a>
+<a name="ln829">ruuvi_driver_status_t task_environmental_backend_set (const char * const name)</a>
+<a name="ln830">{</a>
+<a name="ln831">    ruuvi_driver_sensor_t * p_backend;</a>
+<a name="ln832">    p_backend = task_sensor_find_backend (m_environmental_sensors, ENV_SENSOR_COUNT, name);</a>
+<a name="ln833"> </a>
+<a name="ln834">    if (NULL != p_backend)</a>
+<a name="ln835">    {</a>
+<a name="ln836">        m_active_sensor = p_backend;</a>
+<a name="ln837">        return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln838">    }</a>
+<a name="ln839"> </a>
+<a name="ln840">    return RUUVI_DRIVER_ERROR_NOT_FOUND;</a>
+<a name="ln841">}</a>
+
+</code></pre>
+<div class="balloon" rel="98"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="94"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="120"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="134"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="154"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="164"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="167"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="190"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="197"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="206"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="220"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="232"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="240"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="250"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="253"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="186"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="347"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="362"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="382"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="392"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="395"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'while' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="343"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="558"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'event'.</p></div>
+<div class="balloon" rel="558"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'event_size'.</p></div>
+<div class="balloon" rel="609"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="616"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="612"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="628"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="633"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="623"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="651"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="651"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="679"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="684"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'status' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="687"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="687"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="689"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'status' of the '|' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="694"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'status' of the '|' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="724"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v614/" target="_blank">V614</a> Uninitialized pointer 'p_log' used. Consider checking the second actual argument of the 'ruuvi_library_ringbuffer_peek' function.</p></div>
+<div class="balloon" rel="769"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'temperature_cc' of the '>>' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="770"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'temperature_cc' of the '>>' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="771"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'temperature_cc' of the '>>' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="772"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand 'temperature_cc' of the '>>' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="775"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="793"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="816"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="840"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="829"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

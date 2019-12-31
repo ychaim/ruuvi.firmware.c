@@ -1,0 +1,189 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_sensor.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_endpoint_5.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_interface_communication_radio.h&quot;</a>
+<a name="ln5">#include &quot;ruuvi_interface_communication_ble4_advertising.h&quot;</a>
+<a name="ln6">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln7">#include &quot;task_acceleration.h&quot;</a>
+<a name="ln8">#include &quot;task_adc.h&quot;</a>
+<a name="ln9">#include &quot;task_environmental.h&quot;</a>
+<a name="ln10">#include &quot;task_sensor.h&quot;</a>
+<a name="ln11"> </a>
+<a name="ln12">#include &lt;string.h&gt;</a>
+<a name="ln13"> </a>
+<a name="ln14">#ifndef TASK_SENSOR_LOG_LEVEL</a>
+<a name="ln15">#define TASK_SENSOR_LOG_LEVEL RUUVI_INTERFACE_LOG_INFO</a>
+<a name="ln16">#endif</a>
+<a name="ln17"> </a>
+<a name="ln18">#define LOG(msg) ruuvi_interface_log(TASK_SENSOR_LOG_LEVEL, msg)</a>
+<a name="ln19">#define LOGD(msg) ruuvi_interface_log(RUUVI_INTERFACE_LOG_DEBUG, msg)</a>
+<a name="ln20">#define LOGHEX(msg, len) ruuvi_interface_log_hex(TASK_SENSOR_LOG_LEVEL, msg, len)</a>
+<a name="ln21"> </a>
+<a name="ln22">ruuvi_driver_status_t task_sensor_configure (ruuvi_driver_sensor_t * const sensor,</a>
+<a name="ln23">        ruuvi_driver_sensor_configuration_t * const config,</a>
+<a name="ln24">        const char * const unit)</a>
+<a name="ln25">{</a>
+<a name="ln26">    if (NULL == sensor || NULL == config)</a>
+<a name="ln27">    {</a>
+<a name="ln28">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln29">    }</a>
+<a name="ln30"> </a>
+<a name="ln31">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln32">    LOGD (&quot;\r\nAttempting to configure &quot;);</a>
+<a name="ln33">    LOGD (sensor-&gt;name);</a>
+<a name="ln34">    LOGD (&quot; with:\r\n&quot;);</a>
+<a name="ln35">    ruuvi_interface_log_sensor_configuration (RUUVI_INTERFACE_LOG_DEBUG, config, unit);</a>
+<a name="ln36">    err_code |= sensor-&gt;configuration_set (sensor, config);</a>
+<a name="ln37">    RUUVI_DRIVER_ERROR_CHECK (err_code, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln38">    LOGD (&quot;Actual configuration:\r\n&quot;);</a>
+<a name="ln39">    ruuvi_interface_log_sensor_configuration (RUUVI_INTERFACE_LOG_DEBUG, config, unit);</a>
+<a name="ln40">    return err_code;</a>
+<a name="ln41">}</a>
+<a name="ln42"> </a>
+<a name="ln43">ruuvi_endpoint_status_t task_sensor_encode_to_5 (uint8_t * const buffer)</a>
+<a name="ln44">{</a>
+<a name="ln45">    if (NULL == buffer)</a>
+<a name="ln46">    {</a>
+<a name="ln47">        return RUUVI_ENDPOINT_ERROR_NULL;</a>
+<a name="ln48">    }</a>
+<a name="ln49"> </a>
+<a name="ln50">    ruuvi_driver_status_t driver_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln51">    ruuvi_endpoint_status_t err_code = RUUVI_ENDPOINT_SUCCESS;</a>
+<a name="ln52">    static uint16_t measurement_counter = 0;</a>
+<a name="ln53">    uint8_t movement_counter = 0;</a>
+<a name="ln54">    ruuvi_driver_sensor_data_t acceleration = {0};</a>
+<a name="ln55">    float acceleration_values[3];</a>
+<a name="ln56">    acceleration.data = acceleration_values;</a>
+<a name="ln57">    acceleration.fields.datas.acceleration_x_g = 1;</a>
+<a name="ln58">    acceleration.fields.datas.acceleration_y_g = 1;</a>
+<a name="ln59">    acceleration.fields.datas.acceleration_z_g = 1;</a>
+<a name="ln60">    float vdd;</a>
+<a name="ln61">    ruuvi_driver_sensor_data_t environmental = {0};</a>
+<a name="ln62">    float environmental_values[3];</a>
+<a name="ln63">    environmental.data = environmental_values;</a>
+<a name="ln64">    environmental.fields.datas.humidity_rh = 1;</a>
+<a name="ln65">    environmental.fields.datas.temperature_c = 1;</a>
+<a name="ln66">    environmental.fields.datas.pressure_pa = 1;</a>
+<a name="ln67">    driver_code |= task_acceleration_data_get (&amp;acceleration);</a>
+<a name="ln68">    driver_code |= task_acceleration_movement_count_get (&amp;movement_counter);</a>
+<a name="ln69">    driver_code |= task_environmental_data_get (&amp;environmental);</a>
+<a name="ln70">    driver_code |= task_adc_vdd_get (&amp;vdd);</a>
+<a name="ln71">    ruuvi_endpoint_5_data_t ep5_data = {0};</a>
+<a name="ln72">    ep5_data.accelerationx_g = ruuvi_driver_sensor_data_parse (&amp;acceleration,</a>
+<a name="ln73">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln74">    {</a>
+<a name="ln75">        .datas.acceleration_x_g = 1</a>
+<a name="ln76">    });</a>
+<a name="ln77">    ep5_data.accelerationy_g = ruuvi_driver_sensor_data_parse (&amp;acceleration,</a>
+<a name="ln78">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln79">    {</a>
+<a name="ln80">        .datas.acceleration_y_g = 1</a>
+<a name="ln81">    });</a>
+<a name="ln82">    ep5_data.accelerationz_g = ruuvi_driver_sensor_data_parse (&amp;acceleration,</a>
+<a name="ln83">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln84">    {</a>
+<a name="ln85">        .datas.acceleration_z_g = 1</a>
+<a name="ln86">    });</a>
+<a name="ln87">    ep5_data.battery_v       = vdd;</a>
+<a name="ln88">    ep5_data.humidity_rh     = ruuvi_driver_sensor_data_parse (&amp;environmental,</a>
+<a name="ln89">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln90">    {</a>
+<a name="ln91">        .datas.humidity_rh = 1</a>
+<a name="ln92">    });</a>
+<a name="ln93">    ep5_data.temperature_c   = ruuvi_driver_sensor_data_parse (&amp;environmental,</a>
+<a name="ln94">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln95">    {</a>
+<a name="ln96">        .datas.temperature_c = 1</a>
+<a name="ln97">    });</a>
+<a name="ln98">    ep5_data.pressure_pa     = ruuvi_driver_sensor_data_parse (&amp;environmental,</a>
+<a name="ln99">                               (ruuvi_driver_sensor_data_fields_t)</a>
+<a name="ln100">    {</a>
+<a name="ln101">        .datas.pressure_pa = 1</a>
+<a name="ln102">    });</a>
+<a name="ln103">    ep5_data.movement_count  = movement_counter;</a>
+<a name="ln104">    driver_code |= ruuvi_interface_communication_radio_address_get (&amp; (ep5_data.address));</a>
+<a name="ln105">    driver_code |= ruuvi_interface_communication_ble4_advertising_tx_power_get (</a>
+<a name="ln106">                       &amp;ep5_data.tx_power);</a>
+<a name="ln107">    ep5_data.measurement_count = measurement_counter++;</a>
+<a name="ln108"> </a>
+<a name="ln109">    // Wrap measurement counter off the invalid.</a>
+<a name="ln110">    if (measurement_counter == UINT16_MAX)</a>
+<a name="ln111">    {</a>
+<a name="ln112">        measurement_counter = 0;</a>
+<a name="ln113">    }</a>
+<a name="ln114"> </a>
+<a name="ln115">    err_code = ruuvi_endpoint_5_encode (buffer, &amp;ep5_data);</a>
+<a name="ln116">    return ( (RUUVI_DRIVER_SUCCESS | RUUVI_ENDPOINT_SUCCESS) == (err_code | driver_code)) ?</a>
+<a name="ln117">           RUUVI_ENDPOINT_SUCCESS : RUUVI_ENDPOINT_ERROR_ENCODING;</a>
+<a name="ln118">}</a>
+<a name="ln119"> </a>
+<a name="ln120">ruuvi_driver_sensor_t * task_sensor_find_backend (ruuvi_driver_sensor_t * const</a>
+<a name="ln121">        sensor_list,</a>
+<a name="ln122">        const size_t count, const char * const name)</a>
+<a name="ln123">{</a>
+<a name="ln124">    ruuvi_driver_sensor_t * p_sensor = NULL;</a>
+<a name="ln125"> </a>
+<a name="ln126">    for (size_t ii = 0; ii &lt; count; ii++)</a>
+<a name="ln127">    {</a>
+<a name="ln128">        if (0 == strcmp (sensor_list[ii].name, name))</a>
+<a name="ln129">        {</a>
+<a name="ln130">            p_sensor = &amp; (sensor_list[ii]);</a>
+<a name="ln131">            break;</a>
+<a name="ln132">        }</a>
+<a name="ln133">    }</a>
+<a name="ln134"> </a>
+<a name="ln135">    return p_sensor;</a>
+<a name="ln136">}</a>
+
+</code></pre>
+<div class="balloon" rel="28"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="37"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="37"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="22"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="47"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '|' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '0', right - '0'</p></div>
+<div class="balloon" rel="117"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="43"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

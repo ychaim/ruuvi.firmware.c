@@ -1,0 +1,37 @@
+var group__communication__tasks =
+[
+    [ "Advertisement tasks", "group__advertisement__tasks.html", "group__advertisement__tasks" ],
+    [ "task_gatt.h", "task__gatt_8h.html", null ],
+    [ "task_communication_api_t", "structtask__communication__api__t.html", [
+      [ "data_get", "structtask__communication__api__t.html#a15ed912fbc525ae483e5a68d21c6a8e2", null ],
+      [ "data_target", "structtask__communication__api__t.html#ab5bfe0352ef54d38af3413630af55b11", null ],
+      [ "log_cfg", "structtask__communication__api__t.html#ab794c13cd38e1d9006d3c6b859084be3", null ],
+      [ "log_read", "structtask__communication__api__t.html#aff20bc75096a1d5a815bf8f8853243bb", null ],
+      [ "offset_get", "structtask__communication__api__t.html#a6da9c6ea11b48c4532845d891013ec93", null ],
+      [ "offset_set", "structtask__communication__api__t.html#a40e3bd2acb880bcc4789715fd5fc5363", null ],
+      [ "sensor", "structtask__communication__api__t.html#ad20212766093a9d9188dd011524712e2", null ]
+    ] ],
+    [ "TASK_COMMUNICATION_SENSOR_OFFSET_U16_INVALID", "group__communication__tasks.html#ga355f7fecb54a732d05289a82f5e5bd37", null ],
+    [ "heartbeat_data_fp_t", "group__communication__tasks.html#ga6d58f93f7148b979051ba207aac7bf30", null ],
+    [ "task_api_data_fp_t", "group__communication__tasks.html#gaeb7a1bee328ecf59b9f2a32c23a8bc64", null ],
+    [ "task_api_data_target_t", "group__communication__tasks.html#gac9be88cb0092dec1bd2685bf90719cf7", null ],
+    [ "task_api_log_cfg_t", "group__communication__tasks.html#ga1cf326fd41678e7120f57604ae50719a", null ],
+    [ "task_api_log_read_t", "group__communication__tasks.html#ga7a4e83ba070fd30d2e17be6633beaa2b", null ],
+    [ "task_communication_api_t", "group__communication__tasks.html#ga023dea9be08f5c7a2b494d916dc59fa8", null ],
+    [ "task_gatt_cb_t", "group__communication__tasks.html#gaba833a7b984cfa8bb6575bb86ff20c02", null ],
+    [ "task_communication_heartbeat_configure", "group__communication__tasks.html#gaa71f8575329e1c262357c7ffb884c943", null ],
+    [ "task_communication_on_data", "group__communication__tasks.html#ga5e9c27e16eb977bbc394c6977cfa123e", null ],
+    [ "task_gatt_dfu_init", "group__communication__tasks.html#gab6deb01f7eb6b7e0487e57531a1a61b2", null ],
+    [ "task_gatt_dis_init", "group__communication__tasks.html#ga67bb12e5939ef55c03e50b64b1040cc3", null ],
+    [ "task_gatt_disable", "group__communication__tasks.html#gac7bbedad9a32042d52b753f7ff6bbce9", null ],
+    [ "task_gatt_enable", "group__communication__tasks.html#gac3e156c7a713188e3eef77977e2b83f2", null ],
+    [ "task_gatt_init", "group__communication__tasks.html#ga7f0c2052d91b1aa404e664f9ff9cd555", null ],
+    [ "task_gatt_is_init", "group__communication__tasks.html#ga34a6a3f798ea6479df79f0c8376fb242", null ],
+    [ "task_gatt_nus_init", "group__communication__tasks.html#ga7daa89797e044edf8797447b8c55e2bb", null ],
+    [ "task_gatt_nus_is_connected", "group__communication__tasks.html#ga958c2eb0de3d6e3cd501e5f77d22811e", null ],
+    [ "task_gatt_send_asynchronous", "group__communication__tasks.html#ga16f137e921d1695814fcfd739e587d96", null ],
+    [ "task_gatt_set_on_connected_isr", "group__communication__tasks.html#gac4b7a69be4a59db27c9fa2aeeaf42921", null ],
+    [ "task_gatt_set_on_disconn_isr", "group__communication__tasks.html#gaa36c2a634d0938f5ad90d3a9391b24c6", null ],
+    [ "task_gatt_set_on_received_isr", "group__communication__tasks.html#gafa6713f2060d3b205e306b70f91deb72", null ],
+    [ "task_gatt_set_on_sent_isr", "group__communication__tasks.html#gab85fa9399f87237b5c9a3c7a29eec084", null ]
+];

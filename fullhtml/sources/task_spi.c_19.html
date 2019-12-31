@@ -1,0 +1,97 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_spi.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_interface_spi.h&quot;</a>
+<a name="ln5">#include &quot;task_spi.h&quot;</a>
+<a name="ln6"> </a>
+<a name="ln7">ruuvi_driver_status_t task_spi_init (void)</a>
+<a name="ln8">{</a>
+<a name="ln9">    ruuvi_interface_spi_init_config_t config;</a>
+<a name="ln10">#pragma GCC diagnostic push</a>
+<a name="ln11">#pragma GCC diagnostic ignored &quot;-Wmissing-braces&quot;</a>
+<a name="ln12">    ruuvi_interface_gpio_id_t ss_pins[] = RUUVI_BOARD_SPI_SS_LIST;</a>
+<a name="ln13">#pragma GCC diagnostic pop</a>
+<a name="ln14">    config.mosi.pin = RUUVI_BOARD_SPI_MOSI_PIN;</a>
+<a name="ln15">    config.miso.pin = RUUVI_BOARD_SPI_MISO_PIN;</a>
+<a name="ln16">    config.sclk.pin = RUUVI_BOARD_SPI_SCLK_PIN;</a>
+<a name="ln17">    config.ss_pins = ss_pins;</a>
+<a name="ln18">    config.ss_pins_number = sizeof (ss_pins) / sizeof (ruuvi_interface_gpio_id_t);</a>
+<a name="ln19">    // Assume mode 0 always.</a>
+<a name="ln20">    config.mode = RUUVI_INTERFACE_SPI_MODE_0;</a>
+<a name="ln21"> </a>
+<a name="ln22">    switch (RUUVI_BOARD_SPI_FREQ)</a>
+<a name="ln23">    {</a>
+<a name="ln24">        case RUUVI_BOARD_SPI_FREQUENCY_1M:</a>
+<a name="ln25">            config.frequency = RUUVI_INTERFACE_SPI_FREQUENCY_1M;</a>
+<a name="ln26">            break;</a>
+<a name="ln27"> </a>
+<a name="ln28">        case RUUVI_BOARD_SPI_FREQUENCY_2M:</a>
+<a name="ln29">            config.frequency = RUUVI_INTERFACE_SPI_FREQUENCY_2M;</a>
+<a name="ln30">            break;</a>
+<a name="ln31"> </a>
+<a name="ln32">        case RUUVI_BOARD_SPI_FREQUENCY_4M:</a>
+<a name="ln33">            config.frequency = RUUVI_INTERFACE_SPI_FREQUENCY_4M;</a>
+<a name="ln34">            break;</a>
+<a name="ln35"> </a>
+<a name="ln36">        case RUUVI_BOARD_SPI_FREQUENCY_8M:</a>
+<a name="ln37">            config.frequency = RUUVI_INTERFACE_SPI_FREQUENCY_8M;</a>
+<a name="ln38">            break;</a>
+<a name="ln39"> </a>
+<a name="ln40">        default:</a>
+<a name="ln41">            config.frequency = RUUVI_INTERFACE_SPI_FREQUENCY_1M;</a>
+<a name="ln42">            ruuvi_interface_log (RUUVI_INTERFACE_LOG_WARNING,</a>
+<a name="ln43">                                 &quot;Unknown SPI frequency, defaulting to 1M\r\n&quot;);</a>
+<a name="ln44">    }</a>
+<a name="ln45"> </a>
+<a name="ln46">    return ruuvi_interface_spi_init (&amp;config);</a>
+<a name="ln47">}</a>
+
+</code></pre>
+<div class="balloon" rel="12"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="14"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="15"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="16"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '0' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="22"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2520/" target="_blank">V2520</a> Every switch-clause should be terminated by an unconditional 'break' statement.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

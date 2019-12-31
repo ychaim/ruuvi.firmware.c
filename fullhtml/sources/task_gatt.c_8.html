@@ -1,0 +1,440 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_gatt.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * Ruuvi Firmware 3.x GATT tasks.</a>
+<a name="ln3"> *</a>
+<a name="ln4"> * License: BSD-3</a>
+<a name="ln5"> * Author: Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln6"> **/</a>
+<a name="ln7"> </a>
+<a name="ln8">#include &quot;application_config.h&quot;</a>
+<a name="ln9">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln10">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln11">#include &quot;ruuvi_interface_atomic.h&quot;</a>
+<a name="ln12">#include &quot;ruuvi_interface_communication_ble4_advertising.h&quot;</a>
+<a name="ln13">#include &quot;ruuvi_interface_communication_ble4_gatt.h&quot;</a>
+<a name="ln14">#include &quot;ruuvi_interface_communication_radio.h&quot;</a>
+<a name="ln15">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln16">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln17">#include &quot;ruuvi_interface_rtc.h&quot;</a>
+<a name="ln18">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln19">#include &quot;ruuvi_interface_watchdog.h&quot;</a>
+<a name="ln20">#include &quot;ruuvi_library.h&quot;</a>
+<a name="ln21">#include &quot;ruuvi_library_ringbuffer.h&quot;</a>
+<a name="ln22">#include &quot;task_advertisement.h&quot;</a>
+<a name="ln23">#include &quot;task_communication.h&quot;</a>
+<a name="ln24">#include &quot;task_gatt.h&quot;</a>
+<a name="ln25"> </a>
+<a name="ln26">#include &lt;stdlib.h&gt;</a>
+<a name="ln27">#include &lt;stdio.h&gt;</a>
+<a name="ln28">#include &lt;string.h&gt;</a>
+<a name="ln29"> </a>
+<a name="ln30">#if APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln31"> </a>
+<a name="ln32">#ifndef TASK_GATT_LOG_LEVEL</a>
+<a name="ln33">#define TASK_GATT_LOG_LEVEL RUUVI_INTERFACE_LOG_INFO</a>
+<a name="ln34">#endif</a>
+<a name="ln35"> </a>
+<a name="ln36">#if 0</a>
+<a name="ln37">static inline void LOG (const char * const msg)</a>
+<a name="ln38">{</a>
+<a name="ln39">    ruuvi_interface_log (TASK_GATT_LOG_LEVEL, msg);</a>
+<a name="ln40">}</a>
+<a name="ln41"> </a>
+<a name="ln42">static inline void LOGE (const char * const msg)</a>
+<a name="ln43">{</a>
+<a name="ln44">    ruuvi_interface_log (RUUVI_INTERFACE_LOG_ERROR, msg);</a>
+<a name="ln45">}</a>
+<a name="ln46"> </a>
+<a name="ln47">static inline void LOGHEX (const uint8_t * const msg, const size_t len)</a>
+<a name="ln48">{</a>
+<a name="ln49">    ruuvi_interface_log_hex (TASK_GATT_LOG_LEVEL, msg, len);</a>
+<a name="ln50">}</a>
+<a name="ln51">#endif</a>
+<a name="ln52"> </a>
+<a name="ln53">static inline void LOGD (const char * const msg)</a>
+<a name="ln54">{</a>
+<a name="ln55">    ruuvi_interface_log (RUUVI_INTERFACE_LOG_DEBUG, msg);</a>
+<a name="ln56">}</a>
+<a name="ln57"> </a>
+<a name="ln58">static inline void LOGDHEX (const uint8_t * const msg, const size_t len)</a>
+<a name="ln59">{</a>
+<a name="ln60">    ruuvi_interface_log_hex (RUUVI_INTERFACE_LOG_DEBUG, msg, len);</a>
+<a name="ln61">}</a>
+<a name="ln62"> </a>
+<a name="ln63">static ruuvi_interface_communication_t m_channel;   //!&lt; API for sending data.</a>
+<a name="ln64">static bool m_is_init;</a>
+<a name="ln65">static bool m_nus_is_init;</a>
+<a name="ln66">static bool m_dis_is_init;</a>
+<a name="ln67">static bool m_dfu_is_init;</a>
+<a name="ln68">static bool m_nus_is_connected;</a>
+<a name="ln69">static char m_name[SCAN_RSP_NAME_MAX_LEN + 1] = { 0 };</a>
+<a name="ln70"> </a>
+<a name="ln71">static task_gatt_cb_t m_on_connected;    //!&lt; Callback for connection established</a>
+<a name="ln72">static task_gatt_cb_t m_on_disconnected; //!&lt; Callback for connection lost</a>
+<a name="ln73">static task_gatt_cb_t m_on_received;     //!&lt; Callback for data received</a>
+<a name="ln74">static task_gatt_cb_t m_on_sent;         //!&lt; Callback for data sent</a>
+<a name="ln75"> </a>
+<a name="ln76">// https://github.com/arm-embedded/gcc-arm-none-eabi.debian/blob/master/src/libiberty/strnlen.c</a>
+<a name="ln77">// Not included when compiled with std=c99.</a>
+<a name="ln78">static inline size_t safe_strlen (const char * s, size_t maxlen)</a>
+<a name="ln79">{</a>
+<a name="ln80">    size_t i;</a>
+<a name="ln81"> </a>
+<a name="ln82">    for (i = 0; (i &lt; maxlen) &amp;&amp; ('\0' != s[i]); ++i);</a>
+<a name="ln83"> </a>
+<a name="ln84">    return i;</a>
+<a name="ln85">}</a>
+<a name="ln86"> </a>
+<a name="ln87">#ifdef CEEDLING</a>
+<a name="ln88">void task_gatt_mock_state_reset()</a>
+<a name="ln89">{</a>
+<a name="ln90">    m_on_connected = NULL;</a>
+<a name="ln91">    m_on_disconnected = NULL;</a>
+<a name="ln92">    m_on_received = NULL;</a>
+<a name="ln93">    m_on_sent = NULL;</a>
+<a name="ln94">    m_is_init = false;</a>
+<a name="ln95">    m_nus_is_init = false;</a>
+<a name="ln96">    m_dfu_is_init = false;</a>
+<a name="ln97">    m_dis_is_init = false;</a>
+<a name="ln98">    m_nus_is_connected = false;</a>
+<a name="ln99">    memset (&amp;m_channel, 0, sizeof (ruuvi_interface_communication_t));</a>
+<a name="ln100">    memset (m_name, 0, sizeof (m_name));</a>
+<a name="ln101">}</a>
+<a name="ln102">#endif</a>
+<a name="ln103"> </a>
+<a name="ln104">/**</a>
+<a name="ln105"> * @brief Event handler for NUS events</a>
+<a name="ln106"> *</a>
+<a name="ln107"> * This function is called in interrupt context, which allows for real-time processing</a>
+<a name="ln108"> * such as feeding softdevice data buffers during connection event.</a>
+<a name="ln109"> * Care must be taken to not call any function which requires external peripherals,</a>
+<a name="ln110"> * such as sensors in this context.</a>
+<a name="ln111"> *</a>
+<a name="ln112"> * If sensors must be read / configured as a response to GATT event, schedule</a>
+<a name="ln113"> * the action and send the results back during next connection event by buffering</a>
+<a name="ln114"> * the response with task_gatt_send.</a>
+<a name="ln115"> *</a>
+<a name="ln116"> * @param evt Event type</a>
+<a name="ln117"> * @param p_data pointer to event data, if event is</a>
+<a name="ln118"> *               @c RUUVI_INTERFACE_COMMUNICATION_RECEIVED received data, NULL otherwise.</a>
+<a name="ln119"> * @param data_len number of bytes in received data, 0 if p_data is NULL.</a>
+<a name="ln120"> *</a>
+<a name="ln121"> */</a>
+<a name="ln122">#ifndef CEEDLING</a>
+<a name="ln123">static</a>
+<a name="ln124">#endif</a>
+<a name="ln125">ruuvi_driver_status_t task_gatt_on_nus_isr (ruuvi_interface_communication_evt_t evt,</a>
+<a name="ln126">        void * p_data, size_t data_len)</a>
+<a name="ln127">{</a>
+<a name="ln128">    switch (evt)</a>
+<a name="ln129">    {</a>
+<a name="ln130">        // Note: This gets called only after the NUS notifications have been registered.</a>
+<a name="ln131">        case RUUVI_INTERFACE_COMMUNICATION_CONNECTED:</a>
+<a name="ln132">            m_nus_is_connected = true;</a>
+<a name="ln133">            (NULL != m_on_connected) ? m_on_connected (p_data, data_len) : false;</a>
+<a name="ln134">            break;</a>
+<a name="ln135"> </a>
+<a name="ln136">        case RUUVI_INTERFACE_COMMUNICATION_DISCONNECTED:</a>
+<a name="ln137">            m_nus_is_connected = false;</a>
+<a name="ln138">            (NULL != m_on_disconnected) ? m_on_disconnected (p_data, data_len) : false;</a>
+<a name="ln139">            break;</a>
+<a name="ln140"> </a>
+<a name="ln141">        case RUUVI_INTERFACE_COMMUNICATION_SENT:</a>
+<a name="ln142">            (NULL != m_on_sent) ? m_on_sent (p_data, data_len) : false;</a>
+<a name="ln143">            break;</a>
+<a name="ln144"> </a>
+<a name="ln145">        case RUUVI_INTERFACE_COMMUNICATION_RECEIVED:</a>
+<a name="ln146">            (NULL != m_on_received) ? m_on_received (p_data, data_len) : false;</a>
+<a name="ln147">            break;</a>
+<a name="ln148"> </a>
+<a name="ln149">        default:</a>
+<a name="ln150">            break;</a>
+<a name="ln151">    }</a>
+<a name="ln152"> </a>
+<a name="ln153">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln154">}</a>
+<a name="ln155"> </a>
+<a name="ln156">ruuvi_driver_status_t task_gatt_dis_init (const</a>
+<a name="ln157">        ruuvi_interface_communication_ble4_gatt_dis_init_t * const p_dis)</a>
+<a name="ln158">{</a>
+<a name="ln159">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln160"> </a>
+<a name="ln161">    if (NULL == p_dis)</a>
+<a name="ln162">    {</a>
+<a name="ln163">        err_code |= RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln164">    }</a>
+<a name="ln165">    else if (task_gatt_is_init() &amp;&amp; (!m_dis_is_init))</a>
+<a name="ln166">    {</a>
+<a name="ln167">        err_code |= ruuvi_interface_communication_ble4_gatt_dis_init (p_dis);</a>
+<a name="ln168">        m_dis_is_init = (RUUVI_DRIVER_SUCCESS == err_code);</a>
+<a name="ln169">    }</a>
+<a name="ln170">    else</a>
+<a name="ln171">    {</a>
+<a name="ln172">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln173">    }</a>
+<a name="ln174"> </a>
+<a name="ln175">    return err_code;</a>
+<a name="ln176">}</a>
+<a name="ln177"> </a>
+<a name="ln178">ruuvi_driver_status_t task_gatt_nus_init (void)</a>
+<a name="ln179">{</a>
+<a name="ln180">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln181"> </a>
+<a name="ln182">    if (task_gatt_is_init() &amp;&amp; (!m_nus_is_init))</a>
+<a name="ln183">    {</a>
+<a name="ln184">        err_code |= ruuvi_interface_communication_ble4_gatt_nus_init (&amp;m_channel);</a>
+<a name="ln185"> </a>
+<a name="ln186">        if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln187">        {</a>
+<a name="ln188">            m_channel.on_evt = task_gatt_on_nus_isr;</a>
+<a name="ln189">            m_nus_is_init = true;</a>
+<a name="ln190">        }</a>
+<a name="ln191">    }</a>
+<a name="ln192">    else</a>
+<a name="ln193">    {</a>
+<a name="ln194">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln195">    }</a>
+<a name="ln196"> </a>
+<a name="ln197">    return err_code;</a>
+<a name="ln198">}</a>
+<a name="ln199"> </a>
+<a name="ln200">ruuvi_driver_status_t task_gatt_dfu_init (void)</a>
+<a name="ln201">{</a>
+<a name="ln202">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln203"> </a>
+<a name="ln204">    if (task_gatt_is_init() &amp;&amp; (!m_dfu_is_init))</a>
+<a name="ln205">    {</a>
+<a name="ln206">        err_code |= ruuvi_interface_communication_ble4_gatt_dfu_init();</a>
+<a name="ln207">        m_dfu_is_init = (RUUVI_DRIVER_SUCCESS == err_code);</a>
+<a name="ln208">    }</a>
+<a name="ln209">    else</a>
+<a name="ln210">    {</a>
+<a name="ln211">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln212">    }</a>
+<a name="ln213"> </a>
+<a name="ln214">    return err_code;</a>
+<a name="ln215">}</a>
+<a name="ln216"> </a>
+<a name="ln217">ruuvi_driver_status_t task_gatt_init (const char * const name)</a>
+<a name="ln218">{</a>
+<a name="ln219">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln220"> </a>
+<a name="ln221">    if (NULL == name)</a>
+<a name="ln222">    {</a>
+<a name="ln223">        err_code |= RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln224">    }</a>
+<a name="ln225">    else if (task_advertisement_is_init() &amp;&amp; (!task_gatt_is_init()))</a>
+<a name="ln226">    {</a>
+<a name="ln227">        const size_t name_length = safe_strlen (name, sizeof (m_name));</a>
+<a name="ln228"> </a>
+<a name="ln229">        if (sizeof (m_name) &gt; name_length)</a>
+<a name="ln230">        {</a>
+<a name="ln231">            err_code |= ruuvi_interface_communication_ble4_gatt_init();</a>
+<a name="ln232">            memcpy (m_name, name, name_length);</a>
+<a name="ln233">            m_name[name_length] = '\0';</a>
+<a name="ln234">        }</a>
+<a name="ln235">        else</a>
+<a name="ln236">        {</a>
+<a name="ln237">            err_code |= RUUVI_DRIVER_ERROR_INVALID_LENGTH;</a>
+<a name="ln238">        }</a>
+<a name="ln239">    }</a>
+<a name="ln240">    else</a>
+<a name="ln241">    {</a>
+<a name="ln242">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln243">    }</a>
+<a name="ln244"> </a>
+<a name="ln245">    if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln246">    {</a>
+<a name="ln247">        m_is_init = true;</a>
+<a name="ln248">    }</a>
+<a name="ln249"> </a>
+<a name="ln250">    return err_code;</a>
+<a name="ln251">}</a>
+<a name="ln252"> </a>
+<a name="ln253">ruuvi_driver_status_t task_gatt_enable (void)</a>
+<a name="ln254">{</a>
+<a name="ln255">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln256"> </a>
+<a name="ln257">    if (task_gatt_is_init())</a>
+<a name="ln258">    {</a>
+<a name="ln259">        // Note that this doesn't update sofdevice buffer, you have to call</a>
+<a name="ln260">        // advertising functions to encode data and start the advertisements.</a>
+<a name="ln261">        err_code |= ruuvi_interface_communication_ble4_advertising_scan_response_setup (</a>
+<a name="ln262">                        m_name, m_nus_is_init);</a>
+<a name="ln263">        err_code |= ruuvi_interface_communication_ble4_advertising_type_set (</a>
+<a name="ln264">                        CONNECTABLE_SCANNABLE);</a>
+<a name="ln265">    }</a>
+<a name="ln266">    else</a>
+<a name="ln267">    {</a>
+<a name="ln268">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln269">    }</a>
+<a name="ln270"> </a>
+<a name="ln271">    return err_code;</a>
+<a name="ln272">}</a>
+<a name="ln273"> </a>
+<a name="ln274">ruuvi_driver_status_t task_gatt_disable (void)</a>
+<a name="ln275">{</a>
+<a name="ln276">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln277"> </a>
+<a name="ln278">    if (task_gatt_is_init())</a>
+<a name="ln279">    {</a>
+<a name="ln280">        err_code |= ruuvi_interface_communication_ble4_advertising_type_set (</a>
+<a name="ln281">                        NONCONNECTABLE_NONSCANNABLE);</a>
+<a name="ln282">    }</a>
+<a name="ln283">    else</a>
+<a name="ln284">    {</a>
+<a name="ln285">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln286">    }</a>
+<a name="ln287"> </a>
+<a name="ln288">    return err_code;</a>
+<a name="ln289">}</a>
+<a name="ln290"> </a>
+<a name="ln291">bool task_gatt_is_init (void)</a>
+<a name="ln292">{</a>
+<a name="ln293">    return m_is_init;</a>
+<a name="ln294">}</a>
+<a name="ln295"> </a>
+<a name="ln296">/**</a>
+<a name="ln297"> * @brief check if NUS is connected, i.e. central has registered to TX notifications.</a>
+<a name="ln298"> *</a>
+<a name="ln299"> * @return true if NUS is connected is initialized, false otherwise.</a>
+<a name="ln300"> */</a>
+<a name="ln301">bool task_gatt_nus_is_connected (void)</a>
+<a name="ln302">{</a>
+<a name="ln303">    return m_nus_is_connected &amp;&amp; (NULL != m_channel.send);</a>
+<a name="ln304">}</a>
+<a name="ln305"> </a>
+<a name="ln306">ruuvi_driver_status_t task_gatt_send_asynchronous (ruuvi_interface_communication_message_t</a>
+<a name="ln307">        * const p_msg)</a>
+<a name="ln308">{</a>
+<a name="ln309">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln310"> </a>
+<a name="ln311">    // State, input check</a>
+<a name="ln312">    if (NULL == p_msg)</a>
+<a name="ln313">    {</a>
+<a name="ln314">        err_code |= RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln315">    }</a>
+<a name="ln316">    else if (!task_gatt_nus_is_connected())</a>
+<a name="ln317">    {</a>
+<a name="ln318">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln319">    }</a>
+<a name="ln320">    else</a>
+<a name="ln321">    {</a>
+<a name="ln322">        // Try to put data to SD</a>
+<a name="ln323">        err_code |= m_channel.send (p_msg);</a>
+<a name="ln324"> </a>
+<a name="ln325">        // If success, return. Else put data to ringbuffer</a>
+<a name="ln326">        if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln327">        {</a>
+<a name="ln328">            LOGD (&quot;&gt;&gt;&gt;;&quot;);</a>
+<a name="ln329">            LOGDHEX (p_msg-&gt;data, p_msg-&gt;data_length);</a>
+<a name="ln330">            LOGD (&quot;\r\n&quot;);</a>
+<a name="ln331">        }</a>
+<a name="ln332">        else if (RUUVI_DRIVER_ERROR_RESOURCES == err_code)</a>
+<a name="ln333">        {</a>
+<a name="ln334">            err_code = RUUVI_DRIVER_ERROR_NO_MEM;</a>
+<a name="ln335">        }</a>
+<a name="ln336">        // If the error code is something else than buffer full, return error.</a>
+<a name="ln337">        else</a>
+<a name="ln338">        {</a>
+<a name="ln339">            RUUVI_DRIVER_ERROR_CHECK (err_code, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln340">        }</a>
+<a name="ln341">    }</a>
+<a name="ln342"> </a>
+<a name="ln343">    return err_code;</a>
+<a name="ln344">}</a>
+<a name="ln345"> </a>
+<a name="ln346">void task_gatt_set_on_connected_isr (const task_gatt_cb_t cb)</a>
+<a name="ln347">{</a>
+<a name="ln348">    m_on_connected = cb;</a>
+<a name="ln349">}</a>
+<a name="ln350"> </a>
+<a name="ln351"> </a>
+<a name="ln352">void task_gatt_set_on_disconn_isr (const task_gatt_cb_t cb)</a>
+<a name="ln353">{</a>
+<a name="ln354">    m_on_disconnected = cb;</a>
+<a name="ln355">}</a>
+<a name="ln356"> </a>
+<a name="ln357">void task_gatt_set_on_received_isr (const task_gatt_cb_t cb)</a>
+<a name="ln358">{</a>
+<a name="ln359">    m_on_received = cb;</a>
+<a name="ln360">}</a>
+<a name="ln361"> </a>
+<a name="ln362">void task_gatt_set_on_sent_isr (const task_gatt_cb_t cb)</a>
+<a name="ln363">{</a>
+<a name="ln364">    m_on_sent = cb;</a>
+<a name="ln365">}</a>
+<a name="ln366"> </a>
+<a name="ln367">#endif</a>
+
+</code></pre>
+<div class="balloon" rel="82"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'for' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="149"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2519/" target="_blank">V2519</a> The 'default' label should, besides a 'break' statement, contain either a statement or a comment.</p></div>
+<div class="balloon" rel="163"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="163"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="172"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="172"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="194"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="194"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="211"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="211"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="223"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="223"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="237"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="237"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="242"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="242"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="268"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="268"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="285"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="285"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="314"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="314"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="318"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="318"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="332"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="334"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="339"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="339"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_nfc.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup nfc_tasks</a>
+<a name="ln3"> */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_nfc.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @date 2019-12-24</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln10"> </a>
+<a name="ln11"> * When NFC reader is in range return 4 UTF-textfields with content</a>
+<a name="ln12"> * @code</a>
+<a name="ln13"> * SW: version</a>
+<a name="ln14"> * MAC: AA:BB:CC:DD:EE:FF</a>
+<a name="ln15"> * ID: 00:11:22:33:44:55:66:77</a>
+<a name="ln16"> * DATA:</a>
+<a name="ln17"> * @endcode</a>
+<a name="ln18"> */</a>
+<a name="ln19">#include &quot;application_config.h&quot;</a>
+<a name="ln20">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln21">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln22">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln23">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln24">#include &quot;ruuvi_interface_communication_nfc.h&quot;</a>
+<a name="ln25">#include &quot;ruuvi_interface_communication_radio.h&quot;</a>
+<a name="ln26">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln27">#include &quot;ruuvi_interface_watchdog.h&quot;</a>
+<a name="ln28">#include &quot;task_nfc.h&quot;</a>
+<a name="ln29">#include &lt;stdio.h&gt;</a>
+<a name="ln30">#include &lt;string.h&gt;</a>
+<a name="ln31"> </a>
+<a name="ln32">#if APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln33">static ruuvi_interface_communication_t channel;</a>
+<a name="ln34"> </a>
+<a name="ln35">ruuvi_driver_status_t task_nfc_init (void)</a>
+<a name="ln36">{</a>
+<a name="ln37">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln38">    int written = 0;</a>
+<a name="ln39">    uint8_t fw_prefix[] = {'S', 'W', ':', ' '};</a>
+<a name="ln40">    uint8_t version_string[APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE] = { 0 };</a>
+<a name="ln41">    memcpy (version_string, fw_prefix, sizeof (fw_prefix));</a>
+<a name="ln42">    written = snprintf ( (char *) (version_string + sizeof (fw_prefix)),</a>
+<a name="ln43">                         APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE - sizeof (fw_prefix),</a>
+<a name="ln44">                         &quot;%s&quot;, APPLICATION_FW_VERSION);  // Taken from application_config.h</a>
+<a name="ln45"> </a>
+<a name="ln46">    if (! (written &gt; 0 &amp;&amp; APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE &gt; written))</a>
+<a name="ln47">    {</a>
+<a name="ln48">        err_code |= RUUVI_DRIVER_ERROR_DATA_SIZE;</a>
+<a name="ln49">    }</a>
+<a name="ln50"> </a>
+<a name="ln51">    err_code |= ruuvi_interface_communication_nfc_fw_version_set (version_string,</a>
+<a name="ln52">                strlen ( (char *) version_string));</a>
+<a name="ln53">    uint64_t mac = 0;</a>
+<a name="ln54">    err_code |=  ruuvi_interface_communication_radio_address_get (&amp;mac);</a>
+<a name="ln55">    uint8_t mac_buffer[6] = {0};</a>
+<a name="ln56">    mac_buffer[0] = (mac &gt;&gt; 40) &amp; 0xFF;</a>
+<a name="ln57">    mac_buffer[1] = (mac &gt;&gt; 32) &amp; 0xFF;</a>
+<a name="ln58">    mac_buffer[2] = (mac &gt;&gt; 24) &amp; 0xFF;</a>
+<a name="ln59">    mac_buffer[3] = (mac &gt;&gt; 16) &amp; 0xFF;</a>
+<a name="ln60">    mac_buffer[4] = (mac &gt;&gt; 8) &amp; 0xFF;</a>
+<a name="ln61">    mac_buffer[5] = (mac &gt;&gt; 0) &amp; 0xFF;</a>
+<a name="ln62">    //8 hex bytes</a>
+<a name="ln63">    uint8_t name[APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE] = { 0 };</a>
+<a name="ln64">    written = snprintf ( (char *) name,</a>
+<a name="ln65">                         APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE,</a>
+<a name="ln66">                         &quot;MAC: %02X:%02X:%02X:%02X:%02X:%02X&quot;,</a>
+<a name="ln67">                         mac_buffer[0], mac_buffer[1], mac_buffer[2], mac_buffer[3], mac_buffer[4], mac_buffer[5]);</a>
+<a name="ln68"> </a>
+<a name="ln69">    if (! (written &gt; 0 &amp;&amp; APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE &gt; written))</a>
+<a name="ln70">    {</a>
+<a name="ln71">        err_code |= RUUVI_DRIVER_ERROR_DATA_SIZE;</a>
+<a name="ln72">    }</a>
+<a name="ln73"> </a>
+<a name="ln74">    err_code |= ruuvi_interface_communication_nfc_address_set (name, strlen ( (char *) name));</a>
+<a name="ln75">    uint64_t id = 0;</a>
+<a name="ln76">    err_code |= ruuvi_interface_communication_id_get (&amp;id);</a>
+<a name="ln77">    uint8_t prefix[] = {'I', 'D', ':', ' '};</a>
+<a name="ln78">    uint8_t id_string[APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE] = { 0 };</a>
+<a name="ln79">    memcpy (id_string, prefix, sizeof (prefix));</a>
+<a name="ln80">    uint32_t id0 = (id &gt;&gt; 32) &amp; 0xFFFFFFFF;</a>
+<a name="ln81">    uint32_t id1 = id &amp; 0xFFFFFFFF;</a>
+<a name="ln82">    written = snprintf ( (char *) (id_string + sizeof (prefix)),</a>
+<a name="ln83">                         APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE - sizeof (prefix),</a>
+<a name="ln84">                         &quot;%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X&quot;,</a>
+<a name="ln85">                         (unsigned int) (id0 &gt;&gt; 24) &amp; 0xFF, (unsigned int) (id0 &gt;&gt; 16) &amp; 0xFF,</a>
+<a name="ln86">                         (unsigned int) (id0 &gt;&gt; 8) &amp; 0xFF, (unsigned int) id0 &amp; 0xFF,</a>
+<a name="ln87">                         (unsigned int) (id1 &gt;&gt; 24) &amp; 0xFF, (unsigned int) (id1 &gt;&gt; 16) &amp; 0xFF,</a>
+<a name="ln88">                         (unsigned int) (id1 &gt;&gt; 8) &amp; 0xFF, (unsigned int) id1 &amp; 0xFF);</a>
+<a name="ln89"> </a>
+<a name="ln90">    if (! (written &gt; 0 &amp;&amp; APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE &gt; written))</a>
+<a name="ln91">    {</a>
+<a name="ln92">        err_code |= RUUVI_DRIVER_ERROR_DATA_SIZE;</a>
+<a name="ln93">    }</a>
+<a name="ln94"> </a>
+<a name="ln95">    err_code |= ruuvi_interface_communication_nfc_id_set (id_string,</a>
+<a name="ln96">                strlen ( (char *) id_string));</a>
+<a name="ln97">    err_code |= ruuvi_interface_communication_nfc_init (&amp;channel);</a>
+<a name="ln98">    // Setup one NULL to DATA to match 1.x and 2.x NFC fields.</a>
+<a name="ln99">    // TODO @ojousima add text &quot;Data:&quot;</a>
+<a name="ln100">    ruuvi_interface_communication_message_t msg;</a>
+<a name="ln101">    msg.data_length = 1;</a>
+<a name="ln102">    err_code |= channel.send (&amp;msg);</a>
+<a name="ln103">    channel.on_evt = task_nfc_on_nfc;</a>
+<a name="ln104">    return err_code;</a>
+<a name="ln105">}</a>
+<a name="ln106"> </a>
+<a name="ln107">ruuvi_driver_status_t task_nfc_send (ruuvi_interface_communication_message_t * message)</a>
+<a name="ln108">{</a>
+<a name="ln109">    return channel.send (message);</a>
+<a name="ln110">}</a>
+<a name="ln111"> </a>
+<a name="ln112">void task_acceleration_scheduler_task (void * p_event_data, uint16_t event_size)</a>
+<a name="ln113">{</a>
+<a name="ln114">    // Message + null + &lt;\r&gt;\&lt;n&gt;</a>
+<a name="ln115">    char str[APPLICATION_COMMUNICATION_NFC_TEXT_BUFFER_SIZE + 3] = { 0 };</a>
+<a name="ln116">    ruuvi_interface_communication_message_t message = {0};</a>
+<a name="ln117">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln118"> </a>
+<a name="ln119">    do</a>
+<a name="ln120">    {</a>
+<a name="ln121">        message.data_length = sizeof (message.data);</a>
+<a name="ln122">        memset (&amp; (message.data), 0, sizeof (message.data));</a>
+<a name="ln123">        err_code = channel.read (&amp;message);</a>
+<a name="ln124">        snprintf (str, sizeof (str), &quot;%s\r\n&quot;, (char *) message.data);</a>
+<a name="ln125">        ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, str);</a>
+<a name="ln126">    } while (RUUVI_DRIVER_SUCCESS == err_code</a>
+<a name="ln127"> </a>
+<a name="ln128">             || RUUVI_DRIVER_STATUS_MORE_AVAILABLE == err_code);</a>
+<a name="ln129">}</a>
+<a name="ln130"> </a>
+<a name="ln131">ruuvi_driver_status_t task_nfc_on_nfc (ruuvi_interface_communication_evt_t evt,</a>
+<a name="ln132">                                       void * p_data, size_t data_len)</a>
+<a name="ln133">{</a>
+<a name="ln134">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln135"> </a>
+<a name="ln136">    switch (evt)</a>
+<a name="ln137">    {</a>
+<a name="ln138">        case RUUVI_INTERFACE_COMMUNICATION_CONNECTED:</a>
+<a name="ln139">            ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, &quot;NFC connected \r\n&quot;);</a>
+<a name="ln140">            break;</a>
+<a name="ln141"> </a>
+<a name="ln142">        case RUUVI_INTERFACE_COMMUNICATION_DISCONNECTED:</a>
+<a name="ln143">            ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, &quot;NFC disconnected \r\n&quot;);</a>
+<a name="ln144">            break;</a>
+<a name="ln145"> </a>
+<a name="ln146">        case RUUVI_INTERFACE_COMMUNICATION_SENT:</a>
+<a name="ln147">            ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, &quot;NFC data sent\r\n&quot;);</a>
+<a name="ln148">            break;</a>
+<a name="ln149"> </a>
+<a name="ln150">        case RUUVI_INTERFACE_COMMUNICATION_RECEIVED:</a>
+<a name="ln151">            ruuvi_interface_log (RUUVI_INTERFACE_LOG_INFO, &quot;NFC data received\r\n&quot;);</a>
+<a name="ln152">            break;</a>
+<a name="ln153"> </a>
+<a name="ln154">        default:</a>
+<a name="ln155">            break;</a>
+<a name="ln156">    }</a>
+<a name="ln157"> </a>
+<a name="ln158">    return err_code;</a>
+<a name="ln159">}</a>
+<a name="ln160">#else</a>
+<a name="ln161">ruuvi_driver_status_t task_nfc_init (void)</a>
+<a name="ln162">{</a>
+<a name="ln163">    return  RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln164">}</a>
+<a name="ln165">#endif</a>
+<a name="ln166"> </a>
+<a name="ln167">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="48"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="48"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 9)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="56"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="57"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="58"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="59"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="61"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="71"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="71"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 9)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="80"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2523/" target="_blank">V2523</a> All integer constants of unsigned type should have 'u' or 'U' suffix.</p></div>
+<div class="balloon" rel="81"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2523/" target="_blank">V2523</a> All integer constants of unsigned type should have 'u' or 'U' suffix.</p></div>
+<div class="balloon" rel="85"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="86"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="87"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="88"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '0xFF' of the '&' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="92"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="92"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 9)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="128"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="112"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'event_size'.</p></div>
+<div class="balloon" rel="112"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'p_event_data'.</p></div>
+<div class="balloon" rel="154"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2519/" target="_blank">V2519</a> The 'default' label should, besides a 'break' statement, contain either a statement or a comment.</p></div>
+<div class="balloon" rel="131"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'data_len'.</p></div>
+<div class="balloon" rel="131"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'p_data'.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

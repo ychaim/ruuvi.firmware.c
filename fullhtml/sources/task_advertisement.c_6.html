@@ -1,0 +1,231 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_advertisement.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup advertisement_tasks</a>
+<a name="ln3"> */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_advertisement.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @date 2019-11-19</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln10"> *</a>
+<a name="ln11"> * Advertise data and GATT connection if available.</a>
+<a name="ln12"> */</a>
+<a name="ln13"> </a>
+<a name="ln14">#include &quot;application_config.h&quot;</a>
+<a name="ln15">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln16">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln17">#include &quot;ruuvi_interface_communication_ble4_advertising.h&quot;</a>
+<a name="ln18">#include &quot;ruuvi_interface_communication_radio.h&quot;</a>
+<a name="ln19">#include &quot;task_advertisement.h&quot;</a>
+<a name="ln20"> </a>
+<a name="ln21">// https://github.com/arm-embedded/gcc-arm-none-eabi.debian/blob/master/src/libiberty/strnlen.c</a>
+<a name="ln22">// Not included when compiled with std=c99.</a>
+<a name="ln23">static size_t safe_strlen (const char * s, size_t maxlen)</a>
+<a name="ln24">{</a>
+<a name="ln25">    size_t i;</a>
+<a name="ln26"> </a>
+<a name="ln27">    for (i = 0; i &lt; maxlen; ++i)</a>
+<a name="ln28">        if (s[i] == '\0')</a>
+<a name="ln29">        { break; }</a>
+<a name="ln30"> </a>
+<a name="ln31">    return i;</a>
+<a name="ln32">}</a>
+<a name="ln33"> </a>
+<a name="ln34">static ruuvi_interface_communication_t m_channel;</a>
+<a name="ln35">static bool m_is_init;</a>
+<a name="ln36"> </a>
+<a name="ln37">ruuvi_driver_status_t task_advertisement_init (void)</a>
+<a name="ln38">{</a>
+<a name="ln39">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln40"> </a>
+<a name="ln41">    if (m_is_init)</a>
+<a name="ln42">    {</a>
+<a name="ln43">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln44">    }</a>
+<a name="ln45">    else</a>
+<a name="ln46">    {</a>
+<a name="ln47">        err_code |= ruuvi_interface_communication_ble4_advertising_init (&amp;m_channel);</a>
+<a name="ln48">        err_code |= ruuvi_interface_communication_ble4_advertising_tx_interval_set (</a>
+<a name="ln49">                        APPLICATION_ADVERTISEMENT_UPDATE_INTERVAL_MS);</a>
+<a name="ln50">        int8_t power = APPLICATION_ADVERTISING_POWER_DBM;</a>
+<a name="ln51">        err_code |= ruuvi_interface_communication_ble4_advertising_tx_power_set (&amp;power);</a>
+<a name="ln52">        err_code |= ruuvi_interface_communication_ble4_advertising_type_set (</a>
+<a name="ln53">                        NONCONNECTABLE_NONSCANNABLE);</a>
+<a name="ln54">        err_code |= ruuvi_interface_communication_ble4_advertising_manufacturer_id_set (</a>
+<a name="ln55">                        RUUVI_BOARD_BLE_MANUFACTURER_ID);</a>
+<a name="ln56"> </a>
+<a name="ln57">        if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln58">        {</a>
+<a name="ln59">            m_is_init = true;</a>
+<a name="ln60">        }</a>
+<a name="ln61">    }</a>
+<a name="ln62"> </a>
+<a name="ln63">    return err_code;</a>
+<a name="ln64">}</a>
+<a name="ln65"> </a>
+<a name="ln66">ruuvi_driver_status_t task_advertisement_uninit (void)</a>
+<a name="ln67">{</a>
+<a name="ln68">    m_is_init = false;</a>
+<a name="ln69">    return ruuvi_interface_communication_ble4_advertising_uninit (&amp;m_channel);</a>
+<a name="ln70">}</a>
+<a name="ln71"> </a>
+<a name="ln72">ruuvi_driver_status_t task_advertisement_start (void)</a>
+<a name="ln73">{</a>
+<a name="ln74">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln75"> </a>
+<a name="ln76">    if (!m_is_init)</a>
+<a name="ln77">    {</a>
+<a name="ln78">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln79">    }</a>
+<a name="ln80">    else</a>
+<a name="ln81">    {</a>
+<a name="ln82">        err_code |= ruuvi_interface_communication_ble4_advertising_start();</a>
+<a name="ln83">    }</a>
+<a name="ln84"> </a>
+<a name="ln85">    return err_code;</a>
+<a name="ln86">}</a>
+<a name="ln87"> </a>
+<a name="ln88">ruuvi_driver_status_t task_advertisement_stop (void)</a>
+<a name="ln89">{</a>
+<a name="ln90">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln91"> </a>
+<a name="ln92">    if (!m_is_init)</a>
+<a name="ln93">    {</a>
+<a name="ln94">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln95">    }</a>
+<a name="ln96">    else</a>
+<a name="ln97">    {</a>
+<a name="ln98">        err_code |= ruuvi_interface_communication_ble4_advertising_stop();</a>
+<a name="ln99">    }</a>
+<a name="ln100"> </a>
+<a name="ln101">    return err_code;</a>
+<a name="ln102">}</a>
+<a name="ln103"> </a>
+<a name="ln104">ruuvi_driver_status_t task_advertisement_send_data (</a>
+<a name="ln105">    ruuvi_interface_communication_message_t * const msg)</a>
+<a name="ln106">{</a>
+<a name="ln107">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln108"> </a>
+<a name="ln109">    if (NULL == msg)</a>
+<a name="ln110">    {</a>
+<a name="ln111">        err_code |= RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln112">    }</a>
+<a name="ln113">    else if (!task_advertisement_is_init())</a>
+<a name="ln114">    {</a>
+<a name="ln115">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln116">    }</a>
+<a name="ln117">    else if (24 &lt; msg-&gt;data_length)</a>
+<a name="ln118">    {</a>
+<a name="ln119">        err_code |= RUUVI_DRIVER_ERROR_DATA_SIZE;</a>
+<a name="ln120">    }</a>
+<a name="ln121">    else</a>
+<a name="ln122">    {</a>
+<a name="ln123">        err_code |= m_channel.send (msg);</a>
+<a name="ln124">    }</a>
+<a name="ln125"> </a>
+<a name="ln126">    return err_code;</a>
+<a name="ln127">}</a>
+<a name="ln128"> </a>
+<a name="ln129">ruuvi_driver_status_t task_advertisement_connectability_set (const bool enable,</a>
+<a name="ln130">        const char * const device_name)</a>
+<a name="ln131">{</a>
+<a name="ln132">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln133"> </a>
+<a name="ln134">    if (!task_advertisement_is_init())</a>
+<a name="ln135">    {</a>
+<a name="ln136">        err_code |= RUUVI_DRIVER_ERROR_INVALID_STATE;</a>
+<a name="ln137">    }</a>
+<a name="ln138">    else if (!enable)</a>
+<a name="ln139">    {</a>
+<a name="ln140">        err_code |= ruuvi_interface_communication_ble4_advertising_type_set (</a>
+<a name="ln141">                        NONCONNECTABLE_NONSCANNABLE);</a>
+<a name="ln142">    }</a>
+<a name="ln143">    else if (NULL == device_name)</a>
+<a name="ln144">    {</a>
+<a name="ln145">        err_code |= RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln146">    }</a>
+<a name="ln147">    else if (SCAN_RSP_NAME_MAX_LEN &lt; safe_strlen (device_name, (SCAN_RSP_NAME_MAX_LEN + 1)))</a>
+<a name="ln148">    {</a>
+<a name="ln149">        err_code |= RUUVI_DRIVER_ERROR_INVALID_LENGTH;</a>
+<a name="ln150">    }</a>
+<a name="ln151">    else</a>
+<a name="ln152">    {</a>
+<a name="ln153">        // TODO @ojousima: ensure that advertisement type is extended if necessary.</a>
+<a name="ln154">        err_code |= ruuvi_interface_communication_ble4_advertising_type_set (</a>
+<a name="ln155">                        CONNECTABLE_SCANNABLE);</a>
+<a name="ln156">        err_code |= ruuvi_interface_communication_ble4_advertising_scan_response_setup (</a>
+<a name="ln157">                        device_name, true);</a>
+<a name="ln158">    }</a>
+<a name="ln159"> </a>
+<a name="ln160">    return err_code;</a>
+<a name="ln161">}</a>
+<a name="ln162"> </a>
+<a name="ln163">inline bool task_advertisement_is_init (void)</a>
+<a name="ln164">{</a>
+<a name="ln165">    return ( (NULL != m_channel.send) &amp;&amp; (true == m_is_init));</a>
+<a name="ln166">}</a>
+<a name="ln167">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="27"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'for' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="43"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="43"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="78"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="78"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="94"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="94"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="111"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="111"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="115"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="115"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="119"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="119"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 9)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="136"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="136"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="145"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="145"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="149"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="149"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

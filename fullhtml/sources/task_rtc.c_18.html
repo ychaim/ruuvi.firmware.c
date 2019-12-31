@@ -1,0 +1,178 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_rtc.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_interface_rtc.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln5">#include &quot;task_communication.h&quot;</a>
+<a name="ln6">#include &quot;task_rtc.h&quot;</a>
+<a name="ln7"> </a>
+<a name="ln8">#include &lt;stddef.h&gt;</a>
+<a name="ln9">#include &lt;stdio.h&gt;</a>
+<a name="ln10">#include &lt;inttypes.h&gt;</a>
+<a name="ln11"> </a>
+<a name="ln12">static task_communication_api_t rtc_api =</a>
+<a name="ln13">{</a>
+<a name="ln14">    .sensor      = NULL,</a>
+<a name="ln15">    .offset_set  = task_rtc_comapi_offset_get,</a>
+<a name="ln16">    .offset_get  = task_rtc_comapi_offset_get,</a>
+<a name="ln17">    .data_get    = task_rtc_comapi_data_get,</a>
+<a name="ln18">    .data_target = NULL,</a>
+<a name="ln19">    .log_cfg     = task_rtc_logging_configure</a>
+<a name="ln20">};</a>
+<a name="ln21"> </a>
+<a name="ln22">static uint64_t offset;</a>
+<a name="ln23"> </a>
+<a name="ln24">uint64_t task_rtc_millis()</a>
+<a name="ln25">{</a>
+<a name="ln26">    return ruuvi_interface_rtc_millis() + offset;</a>
+<a name="ln27">}</a>
+<a name="ln28"> </a>
+<a name="ln29">ruuvi_driver_status_t task_rtc_init (void)</a>
+<a name="ln30">{</a>
+<a name="ln31">    // Use task_rtc function to apply offset configured by user to sensor values.</a>
+<a name="ln32">    ruuvi_driver_sensor_timestamp_function_set (task_rtc_millis);</a>
+<a name="ln33">    return ruuvi_interface_rtc_init();</a>
+<a name="ln34">}</a>
+<a name="ln35"> </a>
+<a name="ln36">ruuvi_driver_status_t task_rtc_logging_configure (const task_api_data_target_t target,</a>
+<a name="ln37">        const uint8_t interval)</a>
+<a name="ln38">{</a>
+<a name="ln39">    return RUUVI_DRIVER_ERROR_NOT_IMPLEMENTED;</a>
+<a name="ln40">}</a>
+<a name="ln41"> </a>
+<a name="ln42">ruuvi_driver_status_t task_rtc_millis_offset_set (const int64_t _offset)</a>
+<a name="ln43">{</a>
+<a name="ln44">    uint64_t time = ruuvi_interface_rtc_millis();</a>
+<a name="ln45"> </a>
+<a name="ln46">    if (0 &gt; time + offset)</a>
+<a name="ln47">    {</a>
+<a name="ln48">        return RUUVI_DRIVER_ERROR_INVALID_PARAM;</a>
+<a name="ln49">    }</a>
+<a name="ln50"> </a>
+<a name="ln51">    offset = _offset;</a>
+<a name="ln52">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln53">}</a>
+<a name="ln54"> </a>
+<a name="ln55">int64_t task_rtc_millis_offset_get()</a>
+<a name="ln56">{</a>
+<a name="ln57">    return offset;</a>
+<a name="ln58">}</a>
+<a name="ln59"> </a>
+<a name="ln60">void task_rtc_comapi_offset_get (uint8_t * const bytes)</a>
+<a name="ln61">{</a>
+<a name="ln62">    if (NULL == bytes)</a>
+<a name="ln63">    {</a>
+<a name="ln64">        return;</a>
+<a name="ln65">    }</a>
+<a name="ln66"> </a>
+<a name="ln67">    bytes[0]  = offset &gt;&gt; 56;</a>
+<a name="ln68">    bytes[1]  = offset &gt;&gt; 48;</a>
+<a name="ln69">    bytes[2]  = offset &gt;&gt; 40;</a>
+<a name="ln70">    bytes[3]  = offset &gt;&gt; 32;</a>
+<a name="ln71">    bytes[4]  = offset &gt;&gt; 24;</a>
+<a name="ln72">    bytes[5]  = offset &gt;&gt; 16;</a>
+<a name="ln73">    bytes[6]  = offset &gt;&gt; 8;</a>
+<a name="ln74">    bytes[7]  = offset &gt;&gt; 0;</a>
+<a name="ln75">}</a>
+<a name="ln76"> </a>
+<a name="ln77">void task_rtc_comapi_offset_set (uint8_t * const bytes)</a>
+<a name="ln78">{</a>
+<a name="ln79">    if (NULL == bytes)</a>
+<a name="ln80">    {</a>
+<a name="ln81">        return;</a>
+<a name="ln82">    }</a>
+<a name="ln83"> </a>
+<a name="ln84">    offset = ( (uint64_t) bytes[0]  &lt;&lt; 56) +</a>
+<a name="ln85">             ( (uint64_t) bytes[1]  &lt;&lt; 48) +</a>
+<a name="ln86">             ( (uint64_t) bytes[2]  &lt;&lt; 40) +</a>
+<a name="ln87">             ( (uint64_t) bytes[3]  &lt;&lt; 32) +</a>
+<a name="ln88">             ( (uint64_t) bytes[4]  &lt;&lt; 24) +</a>
+<a name="ln89">             ( (uint64_t) bytes[5]  &lt;&lt; 16) +</a>
+<a name="ln90">             ( (uint64_t) bytes[6]  &lt;&lt; 8)  +</a>
+<a name="ln91">             ( (uint64_t) bytes[7]  &lt;&lt; 0);</a>
+<a name="ln92">}</a>
+<a name="ln93"> </a>
+<a name="ln94">void task_rtc_comapi_data_get (uint8_t * const bytes)</a>
+<a name="ln95">{</a>
+<a name="ln96">    if (NULL == bytes)</a>
+<a name="ln97">    {</a>
+<a name="ln98">        return;</a>
+<a name="ln99">    }</a>
+<a name="ln100"> </a>
+<a name="ln101">    uint64_t millis = task_rtc_millis();</a>
+<a name="ln102">    bytes[0]  = millis &gt;&gt; 56;</a>
+<a name="ln103">    bytes[1]  = millis &gt;&gt; 48;</a>
+<a name="ln104">    bytes[2]  = millis &gt;&gt; 40;</a>
+<a name="ln105">    bytes[3]  = millis &gt;&gt; 32;</a>
+<a name="ln106">    bytes[4]  = millis &gt;&gt; 24;</a>
+<a name="ln107">    bytes[5]  = millis &gt;&gt; 16;</a>
+<a name="ln108">    bytes[6]  = millis &gt;&gt; 8;</a>
+<a name="ln109">    bytes[7]  = millis &gt;&gt; 0;</a>
+<a name="ln110">}</a>
+<a name="ln111"> </a>
+<a name="ln112">ruuvi_driver_status_t task_rtc_api_get (task_communication_api_t ** api)</a>
+<a name="ln113">{</a>
+<a name="ln114">    if (NULL == api)</a>
+<a name="ln115">    {</a>
+<a name="ln116">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln117">    }</a>
+<a name="ln118"> </a>
+<a name="ln119">    *api = &amp;rtc_api;</a>
+<a name="ln120">    return RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln121">}</a>
+
+</code></pre>
+<div class="balloon" rel="39"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="36"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'interval'.</p></div>
+<div class="balloon" rel="36"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'target'.</p></div>
+<div class="balloon" rel="48"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="46"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v547/" target="_blank">V547</a> Expression '0 > time + offset' is always false. Unsigned type value is never < 0.</p></div>
+<div class="balloon" rel="42"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> The 'return' statement should be the last statement of a function.</p></div>
+<div class="balloon" rel="77"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2009/" target="_blank">V2009</a> Consider rendering the 'bytes' pointer as a pointer to const.</p></div>
+<div class="balloon" rel="77"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> The 'return' statement should be the last statement of a function.</p></div>
+<div class="balloon" rel="94"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> The 'return' statement should be the last statement of a function.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="112"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

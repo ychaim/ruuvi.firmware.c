@@ -1,0 +1,236 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>nrf5_sdk15_application_config.h</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * Configuration for ruuvi.drivers.c nrf5 sdk15 sdk_config. Platform has default configuration, you'll need to only define the overrides.</a>
+<a name="ln3"> *</a>
+<a name="ln4"> * License: BSD-3</a>
+<a name="ln5"> * Author: Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln6"> */</a>
+<a name="ln7"> </a>
+<a name="ln8">#include &quot;application_config.h&quot;</a>
+<a name="ln9"> </a>
+<a name="ln10">#ifndef NRF5_SDK15_APPLICATION_CONFIG_H</a>
+<a name="ln11">#define NRF5_SDK15_APPLICATION_CONFIG_H</a>
+<a name="ln12">#include &quot;app_util.h&quot;</a>
+<a name="ln13"> </a>
+<a name="ln14">// Log data will be handled immidiately, use minimal buffer size</a>
+<a name="ln15">#define NRF_LOG_ENABLED APPLICATION_LOG_ENABLED</a>
+<a name="ln16">#define NRF_LOG_DEFERRED 0</a>
+<a name="ln17">#if ((APPLICATION_LOG_BUFFER_SIZE &amp; (APPLICATION_LOG_BUFFER_SIZE - 1)) || (APPLICATION_LOG_BUFFER_SIZE&lt;128))</a>
+<a name="ln18">#error &quot;APPLICATION_LOG_BUFFER_SIZE must be a power of 2 and at least 128&quot;</a>
+<a name="ln19">#else</a>
+<a name="ln20">#define NRF_LOG_BUFSIZE              APPLICATION_LOG_BUFFER_SIZE</a>
+<a name="ln21">#define NRF_LOG_STR_PUSH_BUFFER_SIZE APPLICATION_LOG_BUFFER_SIZE</a>
+<a name="ln22">#endif</a>
+<a name="ln23">#define NRF_LOG_ALLOW_OVERFLOW 0</a>
+<a name="ln24">// &lt;i&gt; The following modes are supported:</a>
+<a name="ln25">// &lt;i&gt; - 0 SKIP  - Do not block, output nothing.</a>
+<a name="ln26">// &lt;i&gt; - 1 TRIM  - Do not block, output as much as fits.</a>
+<a name="ln27">// &lt;i&gt; - 2 BLOCK - Wait until there is space in the buffer.</a>
+<a name="ln28">#if DEBUG</a>
+<a name="ln29">#define SEGGER_RTT_CONFIG_DEFAULT_MODE 0</a>
+<a name="ln30">#else</a>
+<a name="ln31">#define SEGGER_RTT_CONFIG_DEFAULT_MODE 0</a>
+<a name="ln32">#endif</a>
+<a name="ln33"> </a>
+<a name="ln34">// Select one backend</a>
+<a name="ln35">#define NRF_LOG_BACKEND_RTT_ENABLED  APPLICATION_LOG_BACKEND_RTT_ENABLED</a>
+<a name="ln36">#define NRF_LOG_BACKEND_UART_ENABLED APPLICATION_LOG_BACKEND_UART_ENABLED</a>
+<a name="ln37"> </a>
+<a name="ln38">#define NRF_FSTORAGE_ENABLED           APPLICATION_FLASH_ENABLED</a>
+<a name="ln39"> </a>
+<a name="ln40">// Enable GPIOTE abstarction</a>
+<a name="ln41">#define GPIOTE_ENABLED                        APPLICATION_GPIO_INTERRUPT_ENABLED</a>
+<a name="ln42">#define GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS APPLICATION_GPIO_INTERRUPT_NUMBER</a>
+<a name="ln43"> </a>
+<a name="ln44">// DC/DC functions. Power and clock must have equal IRQ priorities.</a>
+<a name="ln45">#define POWER_ENABLED                  APPLICATION_POWER_ENABLED</a>
+<a name="ln46">#define NRFX_POWER_ENABLED             POWER_ENABLED</a>
+<a name="ln47">#define NRFX_POWER_CONFIG_IRQ_PRIORITY NRFX_CLOCK_CONFIG_IRQ_PRIORITY</a>
+<a name="ln48">#define NRF_PWR_MGMT_ENABLED           POWER_ENABLED</a>
+<a name="ln49">// Auto retry requires initialized timer/scheduler module</a>
+<a name="ln50">#define NRF_PWR_MGMT_CONFIG_AUTO_SHUTDOWN_RETRY 0</a>
+<a name="ln51"> </a>
+<a name="ln52">// Enable Hardware RTCs used by the application.</a>
+<a name="ln53">// 0 Is reserved for the softdevice.</a>
+<a name="ln54">// 1 is reserved for the application timer / scheduler</a>
+<a name="ln55">#define RTC_ENABLED       APPLICATION_RTC_MCU_ENABLED</a>
+<a name="ln56">#define NRFX_RTC_ENABLED  RTC_ENABLED</a>
+<a name="ln57">#define RTC2_ENABLED      RTC_ENABLED</a>
+<a name="ln58">#define NRFX_RTC2_ENABLED RTC2_ENABLED</a>
+<a name="ln59"> </a>
+<a name="ln60">// Enable software timer + scheduler</a>
+<a name="ln61">#define APP_TIMER_ENABLED              APPLICATION_TIMER_ENABLED</a>
+<a name="ln62">#define NRF_CLOCK_ENABLED              APP_TIMER_ENABLED</a>
+<a name="ln63">#define APP_TIMER_CONFIG_USE_SCHEDULER 0 //!&lt; Do not use scheduler, allow timer to interrupt.</a>
+<a name="ln64">// &lt;0=&gt; 32768 Hz</a>
+<a name="ln65">// &lt;1=&gt; 16384 Hz</a>
+<a name="ln66">// &lt;3=&gt; 8192 Hz</a>
+<a name="ln67">// &lt;7=&gt; 4096 Hz</a>
+<a name="ln68">// &lt;15=&gt; 2048 Hz</a>
+<a name="ln69">// &lt;31=&gt; 1024 Hz</a>
+<a name="ln70">// App timer requires at least 5 ticks before firing, and our resolution is 1ms.</a>
+<a name="ln71">// Pick 8 kHz. Faster timer results in smaller max values</a>
+<a name="ln72">#define APP_TIMER_CONFIG_RTC_FREQUENCY 3</a>
+<a name="ln73">#define APP_SCHEDULER_ENABLED          APPLICATION_SCHEDULER_ENABLED</a>
+<a name="ln74"> </a>
+<a name="ln75">// Watchdog timer</a>
+<a name="ln76">#define WDT_ENABLED                    APPLICATION_WATCHDOG_ENABLED</a>
+<a name="ln77"> </a>
+<a name="ln78">// Enable SAADC</a>
+<a name="ln79">#define SAADC_ENABLED 1</a>
+<a name="ln80"> </a>
+<a name="ln81">#if NRF52811_XXAA</a>
+<a name="ln82">#define I2C_ENABLED                        APPLICATION_I2C_ENABLED</a>
+<a name="ln83">/** nRF52811 supports I2C only on a instance shared with SPI1, known as I2C instance 0 */</a>
+<a name="ln84">#define I2C_INSTANCE                       0</a>
+<a name="ln85">#define I2C0_ENABLED                       APPLICATION_I2C_ENABLED</a>
+<a name="ln86">#define TWI_ENABLED                        I2C_ENABLED</a>
+<a name="ln87">#define TWI0_ENABLED                       I2C_ENABLED</a>
+<a name="ln88">#define TWI0_USE_EASY_DMA                  I2C_ENABLED</a>
+<a name="ln89">#define NRFX_TWI_ENABLED                   I2C_ENABLED</a>
+<a name="ln90">#define NRFX_TWIM_ENABLED                  I2C_ENABLED</a>
+<a name="ln91">#define NRFX_TWIM_ENABLED                  I2C_ENABLED</a>
+<a name="ln92">#define NRFX_TWIM1_ENABLED                 I2C_ENABLED</a>
+<a name="ln93">#define I2C_IRQ_PRIORITY                   7 //&lt;! 2,3,6,7 are allowed.</a>
+<a name="ln94"> </a>
+<a name="ln95">#define SPI_ENABLED                        APPLICATION_SPI_ENABLED</a>
+<a name="ln96">#define SPI_INSTANCE                       0 //&lt;! TWI0 shares SPI 1 instance on nRF52811. SPI Instance 0 is free.</a>
+<a name="ln97">#define SPI_IRQ_PRIORITY                   7 //&lt;! 2,3,6,7 are allowed.</a>
+<a name="ln98">#define SPI_DEFAULT_CONFIG_IRQ_PRIORITY    SPI_IRQ_PRIORITY</a>
+<a name="ln99">// &lt;0=&gt; NRF_GPIO_PIN_NOPULL</a>
+<a name="ln100">// &lt;1=&gt; NRF_GPIO_PIN_PULLDOWN</a>
+<a name="ln101">// &lt;3=&gt; NRF_GPIO_PIN_PULLUP</a>
+<a name="ln102">#define NRF_SPI_DRV_MISO_PULLUP_CFG        0</a>
+<a name="ln103">#define SPI0_ENABLED                       APPLICATION_SPI_ENABLED</a>
+<a name="ln104">#define SPI0_USE_EASY_DMA                  0</a>
+<a name="ln105">#define NRFX_SPI0_ENABLED                  SPI_ENABLED</a>
+<a name="ln106">#else</a>
+<a name="ln107">#define I2C_ENABLED                        APPLICATION_I2C_ENABLED</a>
+<a name="ln108">#define I2C_INSTANCE                       0</a>
+<a name="ln109">#define I2C0_ENABLED                       APPLICATION_I2C_ENABLED</a>
+<a name="ln110">#define TWI_ENABLED                        I2C_ENABLED</a>
+<a name="ln111">#define TWI0_ENABLED                       I2C_ENABLED</a>
+<a name="ln112">#define TWI0_USE_EASY_DMA                  I2C_ENABLED</a>
+<a name="ln113">#define NRFX_TWI_ENABLED                   I2C_ENABLED</a>
+<a name="ln114">#define NRFX_TWIM_ENABLED                  I2C_ENABLED</a>
+<a name="ln115">#define NRFX_TWIM_ENABLED                  I2C_ENABLED</a>
+<a name="ln116">#define NRFX_TWIM1_ENABLED                 I2C_ENABLED</a>
+<a name="ln117">#define I2C_IRQ_PRIORITY                   7 //&lt;! 2,3,6,7 are allowed.</a>
+<a name="ln118"> </a>
+<a name="ln119">#define SPI_ENABLED                        APPLICATION_SPI_ENABLED</a>
+<a name="ln120">#define SPI_INSTANCE                       1 //!&lt; Do not share I2C/SPI instance on 52832.</a>
+<a name="ln121">#define SPI_IRQ_PRIORITY                   7 //&lt;! 2,3,6,7 are allowed.</a>
+<a name="ln122">#define SPI_DEFAULT_CONFIG_IRQ_PRIORITY    SPI_IRQ_PRIORITY</a>
+<a name="ln123">// &lt;0=&gt; NRF_GPIO_PIN_NOPULL</a>
+<a name="ln124">// &lt;1=&gt; NRF_GPIO_PIN_PULLDOWN</a>
+<a name="ln125">// &lt;3=&gt; NRF_GPIO_PIN_PULLUP</a>
+<a name="ln126">#define NRF_SPI_DRV_MISO_PULLUP_CFG        0</a>
+<a name="ln127">#define SPI1_ENABLED                       APPLICATION_SPI_ENABLED</a>
+<a name="ln128">#define SPI1_USE_EASY_DMA                  0</a>
+<a name="ln129">#define NRFX_SPI0_ENABLED                  SPI_ENABLED</a>
+<a name="ln130">#endif</a>
+<a name="ln131"> </a>
+<a name="ln132">// 0 is used by the softdevice, 1 is used by scheduler / timer</a>
+<a name="ln133">#define NRF5_SDK15_RTC_INSTANCE            2</a>
+<a name="ln134"> </a>
+<a name="ln135">#define NRF_SDH_ENABLED      APPLICATION_COMMUNICATION_ADVERTISING_ENABLED</a>
+<a name="ln136">#define NRF_SDH_BLE_ENABLED  APPLICATION_COMMUNICATION_ADVERTISING_ENABLED</a>
+<a name="ln137">#define NRF_SDH_BLE_PERIPHERAL_LINK_COUNT  1</a>
+<a name="ln138">#define NRF_SDH_SOC_ENABLED  APPLICATION_COMMUNICATION_ADVERTISING_ENABLED</a>
+<a name="ln139">#define NRF_BLE_GATT_ENABLED APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln140">#define NRF_BLE_QWR_ENABLED  APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln141">#define NRF_BLE_SCAN_ENABLED APPLICATION_COMMUNICATION_ADVERTISING_ENABLED</a>
+<a name="ln142">#define PEER_MANAGER_ENABLED APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln143">#define BLE_DFU_ENABLED      APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln144">#define BLE_DIS_ENABLED      APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln145">#define BLE_NUS_ENABLED      APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln146">#define NRF_SDH_BLE_VS_UUID_COUNT BLE_DFU_ENABLED + \</a>
+<a name="ln147">                                  BLE_DIS_ENABLED + \</a>
+<a name="ln148">                                  BLE_NUS_ENABLED</a>
+<a name="ln149"> </a>
+<a name="ln150">#define NRF_BLE_CONN_PARAMS_ENABLED                           APPLICATION_COMMUNICATION_GATT_ENABLED</a>
+<a name="ln151">#define NRF_BLE_CONN_PARAMS_MAX_SLAVE_LATENCY_DEVIATION       499   //!&lt; Magic number from Nordic example </a>
+<a name="ln152">#define NRF_BLE_CONN_PARAMS_MAX_SUPERVISION_TIMEOUT_DEVIATION 65535 //!&lt; Magic number from Nordic example </a>
+<a name="ln153">/**&lt; Minimum acceptable connection interval. At least 7.5 ms.  */</a>
+<a name="ln154">#define MIN_CONN_INTERVAL                MSEC_TO_UNITS(APPLICATION_GATT_CONN_INTERVAL_MIN_MS, UNIT_1_25_MS)</a>
+<a name="ln155">/**&lt; Maximum acceptable connection interval.  */</a>
+<a name="ln156">#define MAX_CONN_INTERVAL                MSEC_TO_UNITS((APPLICATION_GATT_CONN_INTERVAL_MAX_MS), (UNIT_1_25_MS))</a>
+<a name="ln157">/**&lt; How many intervals slave is allowed to skip */</a>
+<a name="ln158">#define SLAVE_LATENCY                    APPLICATION_GATT_CONN_SLAVE_SKIP_INTERVALS</a>
+<a name="ln159">/**&lt; Timeout if no connection event in this duration. At least a few expected connection events at max interval * slave latency */</a>
+<a name="ln160">#define CONN_SUP_TIMEOUT                 MSEC_TO_UNITS((APPLICATION_GATT_CONN_TIMEOUT_MS), (UNIT_10_MS))</a>
+<a name="ln161"> </a>
+<a name="ln162">#define NRF_BLE_SCAN_BUFFER                  APPLICATION_BLE_SCAN_BUFFER_SIZE</a>
+<a name="ln163">#define NRF_BLE_SCAN_SCAN_INTERVAL           APPLICATION_SCAN_INTERVAL_MS</a>
+<a name="ln164">#define NRF_BLE_SCAN_SCAN_WINDOW             APPLICATION_SCAN_WINDOW_MS</a>
+<a name="ln165">#define NRF_BLE_SCAN_SCAN_DURATION           APPLICATION_SCAN_TIMEOUT_MS</a>
+<a name="ln166">#define NRF_BLE_SCAN_SUPERVISION_TIMEOUT     4000</a>
+<a name="ln167">#define NRF_BLE_SCAN_MIN_CONNECTION_INTERVAL 10</a>
+<a name="ln168">#define NRF_BLE_SCAN_MAX_CONNECTION_INTERVAL 2000</a>
+<a name="ln169">#define NRF_BLE_SCAN_SLAVE_LATENCY           0</a>
+<a name="ln170"> </a>
+<a name="ln171">#define NRFX_NFCT_ENABLED              APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln172">#define NFC_T4T_HAL_ENABLED            APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln173">#define NFC_NDEF_RECORD_ENABLED        APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln174">#define NFC_NDEF_MSG_ENABLED           APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln175">#define NFC_NDEF_TEXT_RECORD_ENABLED   APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln176">#define NFC_NDEF_MSG_PARSER_ENABLED    APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln177">#define NFC_NDEF_RECORD_PARSER_ENABLED APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln178">#define NFC_PLATFORM_ENABLED           APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln179">// NFC requires Timer 4</a>
+<a name="ln180">#if     !(TIMER_ENABLED)</a>
+<a name="ln181">#undef  TIMER_ENABLED</a>
+<a name="ln182">#define TIMER_ENABLED APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln183">#endif</a>
+<a name="ln184">#define TIMER4_ENABLED  APPLICATION_COMMUNICATION_NFC_ENABLED</a>
+<a name="ln185">#define NFC_NDEF_MSG_TAG_TYPE 4</a>
+<a name="ln186"> </a>
+<a name="ln187">#define FDS_ENABLED       APPLICATION_FLASH_ENABLED</a>
+<a name="ln188">#define FDS_VIRTUAL_PAGES APPLICATION_FLASH_DATA_PAGES_NUMBER</a>
+<a name="ln189"> </a>
+<a name="ln190">#endif</a>
+
+</code></pre>
+<div class="balloon" rel="146"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1003/" target="_blank">V1003</a> The macro 'NRF_SDH_BLE_VS_UUID_COUNT' is a dangerous expression. The expression must be surrounded by parentheses.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

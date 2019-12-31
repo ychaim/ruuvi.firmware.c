@@ -1,0 +1,321 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>task_communication.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_boards.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln3">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln4">#include &quot;ruuvi_endpoints.h&quot;</a>
+<a name="ln5">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln6">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln7">#include &quot;ruuvi_interface_rtc.h&quot;</a>
+<a name="ln8">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln9">#include &quot;ruuvi_interface_timer.h&quot;</a>
+<a name="ln10">#include &quot;ruuvi_interface_watchdog.h&quot;</a>
+<a name="ln11">#include &quot;ruuvi_interface_yield.h&quot;</a>
+<a name="ln12"> </a>
+<a name="ln13">#include &quot;task_acceleration.h&quot;</a>
+<a name="ln14">#include &quot;task_adc.h&quot;</a>
+<a name="ln15">#include &quot;task_environmental.h&quot;</a>
+<a name="ln16">#include &quot;task_rtc.h&quot;</a>
+<a name="ln17">#include &quot;task_sensor.h&quot;</a>
+<a name="ln18"> </a>
+<a name="ln19">#include &lt;math.h&gt;</a>
+<a name="ln20">#include &lt;stddef.h&gt;</a>
+<a name="ln21">#include &lt;stdio.h&gt;</a>
+<a name="ln22">#include &lt;string.h&gt;</a>
+<a name="ln23">#include &lt;inttypes.h&gt;</a>
+<a name="ln24"> </a>
+<a name="ln25"> </a>
+<a name="ln26">static ruuvi_interface_timer_id_t</a>
+<a name="ln27">heartbeat_timer;   //!&lt; Timer for heartbeat action</a>
+<a name="ln28">static size_t</a>
+<a name="ln29">m_heartbeat_data_max_len;  //!&lt; Maximum data length for heartbeat data</a>
+<a name="ln30">static ruuvi_interface_communication_xfer_fp_t</a>
+<a name="ln31">heartbeat_target; //!&lt; Function to which send the hearbeat data</a>
+<a name="ln32">static heartbeat_data_fp_t heartbeat_encoder;</a>
+<a name="ln33"> </a>
+<a name="ln34">static ruuvi_driver_status_t task_communication_target_api_get (</a>
+<a name="ln35">    task_communication_api_t ** api, uint8_t target)</a>
+<a name="ln36">{</a>
+<a name="ln37">    if (NULL == api)</a>
+<a name="ln38">    {</a>
+<a name="ln39">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln40">    }</a>
+<a name="ln41"> </a>
+<a name="ln42">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln43"> </a>
+<a name="ln44">    switch (target)</a>
+<a name="ln45">    {</a>
+<a name="ln46">        // All environmental values are controlled through the same API</a>
+<a name="ln47">        case RUUVI_ENDPOINT_STANDARD_DESTINATION_ENVIRONMENTAL:</a>
+<a name="ln48">        case RUUVI_ENDPOINT_STANDARD_DESTINATION_TEMPERATURE:</a>
+<a name="ln49">        case RUUVI_ENDPOINT_STANDARD_DESTINATION_HUMIDITY:</a>
+<a name="ln50">        case RUUVI_ENDPOINT_STANDARD_DESTINATION_PRESSURE:</a>
+<a name="ln51">            task_environmental_api_get (api);</a>
+<a name="ln52">            break;</a>
+<a name="ln53"> </a>
+<a name="ln54">        default:</a>
+<a name="ln55">            err_code = RUUVI_DRIVER_ERROR_INVALID_PARAM;</a>
+<a name="ln56">    }</a>
+<a name="ln57"> </a>
+<a name="ln58">    return err_code;</a>
+<a name="ln59">}</a>
+<a name="ln60"> </a>
+<a name="ln61"> </a>
+<a name="ln62">ruuvi_driver_status_t task_communication_on_data (const</a>
+<a name="ln63">        ruuvi_interface_communication_message_t * const incoming,</a>
+<a name="ln64">        ruuvi_interface_communication_xfer_fp_t reply_fp)</a>
+<a name="ln65">{</a>
+<a name="ln66">    // return error if data is not understood.</a>
+<a name="ln67">    ruuvi_interface_communication_message_t reply = {0};</a>
+<a name="ln68">    // Get target API</a>
+<a name="ln69">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln70">    task_communication_api_t * api;</a>
+<a name="ln71">    err_code |= task_communication_target_api_get (&amp;api,</a>
+<a name="ln72">                incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_DESTINATION_INDEX]);</a>
+<a name="ln73">    ruuvi_driver_sensor_configuration_t config;</a>
+<a name="ln74">    uint8_t payload[RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH];</a>
+<a name="ln75">    // Unless something was done with the data, assume error</a>
+<a name="ln76">    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln77"> </a>
+<a name="ln78">    if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln79">    {</a>
+<a name="ln80">        switch (incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX])</a>
+<a name="ln81">        {</a>
+<a name="ln82">            case RUUVI_ENDPOINT_STANDARD_SENSOR_CONFIGURATION_WRITE:</a>
+<a name="ln83">                if (NULL == api-&gt;sensor)</a>
+<a name="ln84">                {</a>
+<a name="ln85">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln86">                    break;</a>
+<a name="ln87">                }</a>
+<a name="ln88"> </a>
+<a name="ln89">                memcpy (&amp;config, &amp; (incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_PAYLOAD_START_INDEX]),</a>
+<a name="ln90">                        RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln91">                (* (api-&gt;sensor))-&gt;configuration_set (* (api-&gt;sensor), &amp;config);</a>
+<a name="ln92"> </a>
+<a name="ln93">            // Intentional fallthrough to configuration read</a>
+<a name="ln94"> </a>
+<a name="ln95">            case RUUVI_ENDPOINT_STANDARD_SENSOR_CONFIGURATION_READ:</a>
+<a name="ln96">                if (NULL == api-&gt;sensor)</a>
+<a name="ln97">                {</a>
+<a name="ln98">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln99">                    break;</a>
+<a name="ln100">                }</a>
+<a name="ln101"> </a>
+<a name="ln102">                (* (api-&gt;sensor))-&gt;configuration_get (* (api-&gt;sensor), &amp;config);</a>
+<a name="ln103">                memcpy (&amp; (reply.data[RUUVI_ENDPOINT_STANDARD_PAYLOAD_START_INDEX]), &amp;config,</a>
+<a name="ln104">                        RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln105">                // Write state of sensor back to application</a>
+<a name="ln106">                reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] =</a>
+<a name="ln107">                    RUUVI_ENDPOINT_STANDARD_SENSOR_CONFIGURATION_WRITE;</a>
+<a name="ln108">                break;</a>
+<a name="ln109"> </a>
+<a name="ln110">            case RUUVI_ENDPOINT_STANDARD_SENSOR_OFFSET_WRITE:</a>
+<a name="ln111">                if (NULL == api-&gt;offset_set)</a>
+<a name="ln112">                {</a>
+<a name="ln113">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln114">                    break;</a>
+<a name="ln115">                }</a>
+<a name="ln116"> </a>
+<a name="ln117">                memcpy (payload, &amp; (incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_PAYLOAD_START_INDEX]),</a>
+<a name="ln118">                        RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln119">                api-&gt;offset_set (payload);</a>
+<a name="ln120"> </a>
+<a name="ln121">            // Intentional fallthrough to offset read</a>
+<a name="ln122"> </a>
+<a name="ln123">            case RUUVI_ENDPOINT_STANDARD_SENSOR_OFFSET_READ:</a>
+<a name="ln124">                if (NULL == api-&gt;offset_get)</a>
+<a name="ln125">                {</a>
+<a name="ln126">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln127">                    break;</a>
+<a name="ln128">                }</a>
+<a name="ln129"> </a>
+<a name="ln130">                api-&gt;offset_get (payload);</a>
+<a name="ln131">                memcpy (&amp; (reply.data[RUUVI_ENDPOINT_STANDARD_PAYLOAD_START_INDEX]), payload,</a>
+<a name="ln132">                        RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln133">                // Write state of sensor back to application</a>
+<a name="ln134">                reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] =</a>
+<a name="ln135">                    RUUVI_ENDPOINT_STANDARD_SENSOR_OFFSET_WRITE;</a>
+<a name="ln136">                break;</a>
+<a name="ln137"> </a>
+<a name="ln138">            case RUUVI_ENDPOINT_STANDARD_VALUE_READ:</a>
+<a name="ln139">                if (NULL == api-&gt;data_get)</a>
+<a name="ln140">                {</a>
+<a name="ln141">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln142">                    break;</a>
+<a name="ln143">                }</a>
+<a name="ln144"> </a>
+<a name="ln145">                api-&gt;data_get (payload);</a>
+<a name="ln146">                memcpy (&amp; (reply.data[RUUVI_ENDPOINT_STANDARD_PAYLOAD_START_INDEX]), payload,</a>
+<a name="ln147">                        RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln148">                reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_VALUE_WRITE;</a>
+<a name="ln149">                break;</a>
+<a name="ln150"> </a>
+<a name="ln151">            case RUUVI_ENDPOINT_STANDARD_LOG_VALUE_READ:</a>
+<a name="ln152">                if (NULL == api-&gt;log_read)</a>
+<a name="ln153">                {</a>
+<a name="ln154">                    reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln155">                    break;</a>
+<a name="ln156">                }</a>
+<a name="ln157"> </a>
+<a name="ln158">                // This call blocks until error occurs or all the requested data has been sent.</a>
+<a name="ln159">                api-&gt;log_read (reply_fp, incoming);</a>
+<a name="ln160">                // Send end of data element</a>
+<a name="ln161">                reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_LOG_VALUE_WRITE;</a>
+<a name="ln162">                memset (&amp; (reply.data[3]), 0xFF, RUUVI_ENDPOINT_STANDARD_PAYLOAD_LENGTH);</a>
+<a name="ln163">                break;</a>
+<a name="ln164"> </a>
+<a name="ln165">            default:</a>
+<a name="ln166">                reply.data[RUUVI_ENDPOINT_STANDARD_TYPE_INDEX] = RUUVI_ENDPOINT_STANDARD_TYPE_ERROR;</a>
+<a name="ln167">                err_code |= RUUVI_DRIVER_ERROR_NOT_SUPPORTED;</a>
+<a name="ln168">        }</a>
+<a name="ln169">    }</a>
+<a name="ln170"> </a>
+<a name="ln171">    reply.data[RUUVI_ENDPOINT_STANDARD_DESTINATION_INDEX] =</a>
+<a name="ln172">        incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_SOURCE_INDEX];</a>
+<a name="ln173">    reply.data[RUUVI_ENDPOINT_STANDARD_SOURCE_INDEX] =</a>
+<a name="ln174">        incoming-&gt;data[RUUVI_ENDPOINT_STANDARD_DESTINATION_INDEX];</a>
+<a name="ln175">    reply.data_length = RUUVI_ENDPOINT_STANDARD_MESSAGE_LENGTH;</a>
+<a name="ln176"> </a>
+<a name="ln177">    while (RUUVI_DRIVER_ERROR_NO_MEM == reply_fp (&amp;reply))</a>
+<a name="ln178">    {</a>
+<a name="ln179">        ruuvi_interface_yield();</a>
+<a name="ln180">    }</a>
+<a name="ln181"> </a>
+<a name="ln182">    return err_code;</a>
+<a name="ln183">}</a>
+<a name="ln184"> </a>
+<a name="ln185">static void heartbeat_send (void * p_event_data, uint16_t event_size)</a>
+<a name="ln186">{</a>
+<a name="ln187">    ruuvi_interface_communication_message_t msg = {0};</a>
+<a name="ln188">    msg.data_length = m_heartbeat_data_max_len;</a>
+<a name="ln189">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln190"> </a>
+<a name="ln191">    if ( (NULL != heartbeat_target) &amp;&amp; (NULL != heartbeat_encoder))</a>
+<a name="ln192">    {</a>
+<a name="ln193">        // get message to send</a>
+<a name="ln194">        err_code |= heartbeat_encoder (msg.data);</a>
+<a name="ln195">        // send sensor data</a>
+<a name="ln196">        err_code |= heartbeat_target (&amp;msg);</a>
+<a name="ln197">    }</a>
+<a name="ln198"> </a>
+<a name="ln199">    if (RUUVI_DRIVER_SUCCESS == err_code)</a>
+<a name="ln200">    {</a>
+<a name="ln201">        ruuvi_interface_watchdog_feed();</a>
+<a name="ln202">    }</a>
+<a name="ln203"> </a>
+<a name="ln204">    RUUVI_DRIVER_ERROR_CHECK (err_code, ~RUUVI_DRIVER_ERROR_FATAL);</a>
+<a name="ln205">}</a>
+<a name="ln206"> </a>
+<a name="ln207">static void heartbeat_schedule_isr (void * p_context)</a>
+<a name="ln208">{</a>
+<a name="ln209">    ruuvi_interface_scheduler_event_put (NULL, 0, heartbeat_send);</a>
+<a name="ln210">}</a>
+<a name="ln211"> </a>
+<a name="ln212">ruuvi_driver_status_t task_communication_heartbeat_configure (const uint32_t interval_ms,</a>
+<a name="ln213">        const size_t max_len,</a>
+<a name="ln214">        const heartbeat_data_fp_t data_src,</a>
+<a name="ln215">        const ruuvi_interface_communication_xfer_fp_t send)</a>
+<a name="ln216">{</a>
+<a name="ln217">    ruuvi_driver_status_t err_code = RUUVI_DRIVER_SUCCESS;</a>
+<a name="ln218"> </a>
+<a name="ln219">    if (NULL == heartbeat_timer)</a>
+<a name="ln220">    {</a>
+<a name="ln221">        err_code |= ruuvi_interface_timer_create (&amp;heartbeat_timer,</a>
+<a name="ln222">                    RUUVI_INTERFACE_TIMER_MODE_REPEATED, heartbeat_schedule_isr);</a>
+<a name="ln223"> </a>
+<a name="ln224">        if (RUUVI_DRIVER_SUCCESS != err_code)</a>
+<a name="ln225">        {</a>
+<a name="ln226">            return err_code;</a>
+<a name="ln227">        }</a>
+<a name="ln228">    }</a>
+<a name="ln229"> </a>
+<a name="ln230">    ruuvi_interface_timer_stop (heartbeat_timer);</a>
+<a name="ln231"> </a>
+<a name="ln232">    if (NULL == send || NULL == data_src)</a>
+<a name="ln233">    {</a>
+<a name="ln234">        return RUUVI_DRIVER_ERROR_NULL;</a>
+<a name="ln235">    }</a>
+<a name="ln236"> </a>
+<a name="ln237">    m_heartbeat_data_max_len = max_len;</a>
+<a name="ln238">    heartbeat_target = send;</a>
+<a name="ln239">    heartbeat_encoder = data_src;</a>
+<a name="ln240"> </a>
+<a name="ln241">    if (0 != interval_ms)</a>
+<a name="ln242">    {</a>
+<a name="ln243">        err_code |= ruuvi_interface_timer_start (heartbeat_timer, interval_ms);</a>
+<a name="ln244">    }</a>
+<a name="ln245"> </a>
+<a name="ln246">    return err_code;</a>
+<a name="ln247">}</a>
+
+</code></pre>
+<div class="balloon" rel="39"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="55"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="44"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2520/" target="_blank">V2520</a> Every switch-clause should be terminated by an unconditional 'break' statement.</p></div>
+<div class="balloon" rel="34"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="85"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="95"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="95"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '|' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '(0x02)', right - '(1 << 0)'</p></div>
+<div class="balloon" rel="98"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="113"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="123"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="123"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '|' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '(0x04)', right - '(1 << 0)'</p></div>
+<div class="balloon" rel="126"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="138"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="138"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '|' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '(0x08)', right - '(1 << 0)'</p></div>
+<div class="balloon" rel="141"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="151"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="151"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '|' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '(0x10)', right - '(1 << 0)'</p></div>
+<div class="balloon" rel="154"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="166"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v1048/" target="_blank">V1048</a> The 'reply.data[2]' variable was assigned the same value.</p></div>
+<div class="balloon" rel="167"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="167"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 3)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="80"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2520/" target="_blank">V2520</a> Every switch-clause should be terminated by an unconditional 'break' statement.</p></div>
+<div class="balloon" rel="177"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="204"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="204"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="185"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'event_size'.</p></div>
+<div class="balloon" rel="185"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'p_event_data'.</p></div>
+<div class="balloon" rel="234"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="212"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>
